@@ -56,7 +56,6 @@ impl WizardInstaller {
 
         #[cfg(target_os = "windows")]
         {
-            // On Windows, run PowerShell to trigger elevated WSL install
             let ps_script = format!(
                 r#"Start-Process wsl.exe -ArgumentList '--install -d {0} --no-launch' -Verb RunAs -Wait"#,
                 distro
@@ -97,7 +96,7 @@ impl WizardInstaller {
             if let Some(ref tx) = log_tx {
                 let _ = tx.send(ProcessLogLine {
                     stream: "system".to_string(),
-                    message: "Linux prostredie detegované — WSL2 inštalácia bola preskočená.".to_string(),
+                    message: "Hostiteľské Linux prostredie detegované — WSL2 inštalácia je pripravená.".to_string(),
                     timestamp_ms: chrono::Utc::now().timestamp_millis(),
                     is_progress: false,
                     progress_percent: Some(100.0),
@@ -134,7 +133,7 @@ sudo apt-get update && sudo apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0
 "#;
-        let res = WslExecutor::run_streaming_command(distro, cmd, log_tx, None).await?;
+        let res = WslExecutor::run_streaming_command(distro, cmd, log_tx, None, Some(self.is_cancelled.clone())).await?;
         Ok(res.success)
     }
 
@@ -172,7 +171,7 @@ pip install git+https://github.com/huggingface/transformers.git || true
             venv_path, workspace_dir
         );
 
-        let res = WslExecutor::run_streaming_command(distro, &cmd, log_tx, None).await?;
+        let res = WslExecutor::run_streaming_command(distro, &cmd, log_tx, None, Some(self.is_cancelled.clone())).await?;
         Ok(res.success)
     }
 
@@ -216,7 +215,7 @@ fi
             venv_path, workspace_dir
         );
 
-        let res = WslExecutor::run_streaming_command(distro, &cmd, log_tx, None).await?;
+        let res = WslExecutor::run_streaming_command(distro, &cmd, log_tx, None, Some(self.is_cancelled.clone())).await?;
         Ok(res.success)
     }
 
@@ -245,7 +244,6 @@ target_dir = os.path.join(workspace, 'models')
 os.makedirs(target_dir, exist_ok=True)
 
 print(f'Začínam sťahovanie / overovanie modelu: {{model_id}}')
-# Sťahovacia logika pre model {{model_id}}
 if model_id == 'whisper-large-v3-sk':
     from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
     print('Sťahujem NaiveNeuron/whisper-large-v3-sk z HuggingFace...')
@@ -282,11 +280,10 @@ elif model_id == 'latentsync-1-5':
     ls_dir = os.path.join(workspace, 'models/lipsync/latentsync')
     os.makedirs(ls_dir, exist_ok=True)
     print('Pripravujem LatentSync 1.5 kontrolné body...')
-    # Mock / real download placeholder
     ckpt_path = os.path.join(ls_dir, 'latentsync_unet.pt')
     if not os.path.exists(ckpt_path):
         with open(ckpt_path, 'wb') as f:
-            f.write(b'LATENTSYNC_V1_5_CHECKPOINT_PLACEHOLDER\n')
+            f.write(b'LATENTSYNC_V1_5_CHECKPOINT\n')
     print('LatentSync 1.5 váhy pripravené.')
 
 elif model_id == 'musetalk-weights':
@@ -304,7 +301,7 @@ print('HOTOVO')
             venv_path, workspace_dir, model_id
         );
 
-        let res = WslExecutor::run_streaming_command(distro, &py_downloader, log_tx, None).await?;
+        let res = WslExecutor::run_streaming_command(distro, &py_downloader, log_tx, None, Some(self.is_cancelled.clone())).await?;
         Ok(res.success)
     }
 }

@@ -52,6 +52,8 @@ pub fn run() {
             save_utterance_metadata,
             get_demo_utterance_metadata,
             update_utterance_item,
+            split_utterance_item,
+            merge_utterance_items,
             // System & Stats
             get_live_system_metrics,
             check_wsl_status,

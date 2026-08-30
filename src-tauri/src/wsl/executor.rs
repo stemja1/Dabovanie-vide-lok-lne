@@ -1,9 +1,10 @@
 use std::process::{Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use tokio::time::timeout;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +39,7 @@ pub enum ProcessErrorKind {
     MissingPackage,
     FfmpegError,
     Timeout,
+    Cancelled,
     Unknown,
 }
 
@@ -61,7 +63,7 @@ impl WslExecutor {
         }
     }
 
-    /// Runs a short command and collects its stdout and stderr.
+    /// Runs a short command and collects its stdout and stderr safely.
     pub async fn run_command_output(distro: &str, bash_command: &str) -> Result<Output> {
         let mut cmd = Self::build_command(distro, bash_command);
         cmd.stdout(Stdio::piped());
@@ -73,12 +75,13 @@ impl WslExecutor {
         Ok(out)
     }
 
-    /// Runs a command with real-time streaming of stdout/stderr to an mpsc sender and timeout.
+    /// Runs a command with real-time streaming of stdout/stderr, cancellation support, and timeout.
     pub async fn run_streaming_command(
         distro: &str,
         bash_command: &str,
         log_sender: Option<mpsc::UnboundedSender<ProcessLogLine>>,
         timeout_duration: Option<Duration>,
+        cancel_flag: Option<Arc<AtomicBool>>,
     ) -> Result<ProcessExecutionResult> {
         let mut cmd = Self::build_command(distro, bash_command);
         cmd.stdout(Stdio::piped());
@@ -94,14 +97,11 @@ impl WslExecutor {
         let mut stdout_reader = BufReader::new(stdout).lines();
         let mut stderr_reader = BufReader::new(stderr).lines();
 
-        let captured_stdout: Vec<String> = Vec::new();
-        let _captured_stderr: Vec<String> = Vec::new();
-
         let sender_stdout = log_sender.clone();
         let sender_stderr = log_sender.clone();
 
         let stdout_task = tokio::spawn(async move {
-            let mut collected = Vec::new();
+            let mut collected: Vec<String> = Vec::new();
             while let Ok(Some(line)) = stdout_reader.next_line().await {
                 let parsed_progress = Self::parse_progress_line(&line);
                 if let Some(ref tx) = sender_stdout {
@@ -121,7 +121,7 @@ impl WslExecutor {
         });
 
         let stderr_task = tokio::spawn(async move {
-            let mut collected = Vec::new();
+            let mut collected: Vec<String> = Vec::new();
             while let Ok(Some(line)) = stderr_reader.next_line().await {
                 let parsed_progress = Self::parse_progress_line(&line);
                 if let Some(ref tx) = sender_stderr {
@@ -140,17 +140,19 @@ impl WslExecutor {
             collected
         });
 
-        let wait_future = child.wait();
+        // Polling loop to support both timeout and immediate cancellation
+        let poll_interval = Duration::from_millis(100);
+        let start_time = std::time::Instant::now();
 
-        let status_res = if let Some(dur) = timeout_duration {
-            match timeout(dur, wait_future).await {
-                Ok(res) => res,
-                Err(_) => {
+        let exit_status = loop {
+            // Check cancellation
+            if let Some(ref flag) = cancel_flag {
+                if flag.load(Ordering::SeqCst) {
                     let _ = child.kill().await;
                     if let Some(ref tx) = log_sender {
                         let _ = tx.send(ProcessLogLine {
                             stream: "system".to_string(),
-                            message: format!("Process timed out after {} seconds and was terminated.", dur.as_secs()),
+                            message: "Proces bol manuálne zrušený používateľom a bezpečne ukončený.".to_string(),
                             timestamp_ms: chrono::Utc::now().timestamp_millis(),
                             is_progress: false,
                             progress_percent: None,
@@ -160,27 +162,55 @@ impl WslExecutor {
                     return Ok(ProcessExecutionResult {
                         exit_code: -1,
                         success: false,
-                        stdout: captured_stdout.join("\n"),
+                        stdout: String::new(),
+                        stderr: "Operácia bola zrušená používateľom.".to_string(),
+                        error_kind: Some(ProcessErrorKind::Cancelled),
+                        user_remedy: None,
+                    });
+                }
+            }
+
+            // Check timeout
+            if let Some(max_dur) = timeout_duration {
+                if start_time.elapsed() >= max_dur {
+                    let _ = child.kill().await;
+                    if let Some(ref tx) = log_sender {
+                        let _ = tx.send(ProcessLogLine {
+                            stream: "system".to_string(),
+                            message: format!("Proces vypršal po {} sekundách a bol ukončený.", max_dur.as_secs()),
+                            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                            is_progress: false,
+                            progress_percent: None,
+                            step_tag: None,
+                        });
+                    }
+                    return Ok(ProcessExecutionResult {
+                        exit_code: -1,
+                        success: false,
+                        stdout: String::new(),
                         stderr: "Process timed out".to_string(),
                         error_kind: Some(ProcessErrorKind::Timeout),
                         user_remedy: Some("Operácia trvala pridlho. Skontrolujte zaťaženie GPU a skúste znížiť rozlíšenie alebo zvoliť MuseTalk.".to_string()),
                     });
                 }
             }
-        } else {
-            wait_future.await
+
+            // Check if process finished
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    tokio::time::sleep(poll_interval).await;
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Chyba pri čakaní na proces: {}", e));
+                }
+            }
         };
 
         let stdout_lines = stdout_task.await.unwrap_or_default();
         let stderr_lines = stderr_task.await.unwrap_or_default();
 
-        let exit_code = match status_res {
-            Ok(status) => status.code().unwrap_or(-1),
-            Err(e) => {
-                return Err(anyhow::anyhow!("Process execution failed: {}", e));
-            }
-        };
-
+        let exit_code = exit_status.code().unwrap_or(-1);
         let full_stdout = stdout_lines.join("\n");
         let full_stderr = stderr_lines.join("\n");
         let combined_logs = format!("{}\n{}", full_stdout, full_stderr);
@@ -203,7 +233,6 @@ impl WslExecutor {
 
     /// Extracts numerical percentage from progress bars (e.g. `[PROGRESS:45.5%]` or `45%|...`)
     pub fn parse_progress_line(line: &str) -> Option<f32> {
-        // Check custom format [PROGRESS:XX.X%]
         if let Some(pos) = line.find("[PROGRESS:") {
             let slice = &line[pos + 10..];
             if let Some(end) = slice.find('%') {
@@ -212,7 +241,6 @@ impl WslExecutor {
                 }
             }
         }
-        // Check tqdm format: 45%|
         if let Some(percent_pos) = line.find("%|") {
             let start = line[..percent_pos].rfind(' ').map(|p| p + 1).unwrap_or(0);
             if let Ok(val) = line[start..percent_pos].trim().parse::<f32>() {
@@ -222,7 +250,7 @@ impl WslExecutor {
         None
     }
 
-    /// Diagnoses Python / ROCm / PyTorch errors and provides clear Slovak remedies
+    /// Diagnoses Python / ROCm / PyTorch errors and provides clear remedies
     pub fn diagnose_error(log: &str) -> (Option<ProcessErrorKind>, Option<String>) {
         let lower = log.to_lowercase();
 
@@ -247,7 +275,7 @@ impl WslExecutor {
             );
         }
 
-        if lower.contains("hip error") || lower.contains("rocm") && lower.contains("driver") {
+        if lower.contains("hip error") || (lower.contains("rocm") && lower.contains("driver")) {
             return (
                 Some(ProcessErrorKind::RocmDriverError),
                 Some("Chyba ROCm ovládača alebo HIP runtime. Skontrolujte prístup k /dev/kfd a /dev/dri v Ubuntu WSL2 alebo preinštalujte ROCm balíčky.".to_string()),

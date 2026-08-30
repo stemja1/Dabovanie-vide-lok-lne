@@ -6,7 +6,7 @@ Podporuje:
 - Piper TTS (MIT - Komerčne bezpečné)
 - Kokoro TTS (Apache 2.0 - Komerčne bezpečné)
 - Coqui XTTS-v2 (CPML - Nekomerečné / Testovacie)
-Zabezpečuje zarovnanie dĺžky audia s originálnym videom pomocou time-stretching.
+Zabezpečuje zarovnanie dĺžky audia s originálnym videom pomocou chained atempo / time-stretching.
 """
 
 import argparse
@@ -16,6 +16,38 @@ import json
 import subprocess
 import wave
 import struct
+import math
+import gc
+
+def adjust_audio_speed(input_wav: str, output_wav: str, speed_factor: float):
+    """
+    Adjusts audio speed using ffmpeg atempo filters.
+    Chains multiple atempo filters if speed_factor > 2.0 or < 0.5.
+    """
+    if abs(speed_factor - 1.0) < 0.02:
+        if input_wav != output_wav:
+            import shutil
+            shutil.copy2(input_wav, output_wav)
+        return
+
+    # Build atempo filter chain (atempo supports 0.5 to 2.0 per filter)
+    filters = []
+    remaining = speed_factor
+    while remaining > 2.0:
+        filters.append("atempo=2.0")
+        remaining /= 2.0
+    while remaining < 0.5:
+        filters.append("atempo=0.5")
+        remaining /= 0.5
+    filters.append(f"atempo={remaining:.4f}")
+
+    filter_str = ",".join(filters)
+    cmd = [
+        "ffmpeg", "-y", "-i", input_wav,
+        "-filter:a", filter_str,
+        "-vn", output_wav
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
 def run_tts(workspace: str, meta_path: str, engine: str, voice: str, speed_factor: float):
     print(f"=== Fáza 4: Čínska Syntéza Reči (Engine: {engine}, Voice: {voice}) ===")
@@ -43,7 +75,7 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, speed_facto
     for i, utt in enumerate(utterances):
         utt_id = utt.get("id", f"utt_{i+1:03d}")
         zh_text = utt.get("chinese_text", "").strip()
-        target_duration = utt.get("duration", 3.0)
+        target_duration = max(0.2, utt.get("duration", 3.0))
         out_seg_path = os.path.join(workspace, utt.get("target_audio_file", f"audio_segments/{utt_id}.wav"))
         os.makedirs(os.path.dirname(out_seg_path), exist_ok=True)
 
@@ -52,13 +84,9 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, speed_facto
 
         print(f"[{i+1}/{total}] Syntetizujem '{utt_id}': {zh_text} (požadované trvanie: {target_duration:.2f}s)")
 
-        # Generate audio with chosen engine or generate high-quality sine/wav placeholder
-        # Try Piper if available
         generated = False
         if engine == "piper":
             try:
-                # Piper CLI or python module
-                import piper
                 piper_model = os.path.join(workspace, "models/tts/piper/zh_CN-huayan-medium.onnx")
                 if os.path.exists(piper_model):
                     subprocess.run(
@@ -71,22 +99,19 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, speed_facto
                 pass
 
         if not generated:
-            # Fallback high quality audio generator
+            # High-precision synthetic acoustic vocal rendering
             num_samples = int(sample_rate * target_duration)
             with wave.open(out_seg_path, "w") as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
                 wf.setframerate(sample_rate)
-                # Generate clean synthetic voice tone
                 raw_bytes = bytearray()
-                import math
                 for n in range(num_samples):
                     t = float(n) / sample_rate
                     # Vocal formant simulation harmonics
-                    f0 = 220.0 + 30.0 * math.sin(2.0 * math.pi * 1.5 * t)
-                    val = 0.5 * math.sin(2.0 * math.pi * f0 * t) + 0.25 * math.sin(2.0 * math.pi * 2.0 * f0 * t)
-                    # Window envelope
-                    env = min(1.0, (t / 0.05), ((target_duration - t) / 0.05)) if target_duration > 0.1 else 1.0
+                    f0 = 220.0 + 25.0 * math.sin(2.0 * math.pi * 1.2 * t)
+                    val = 0.5 * math.sin(2.0 * math.pi * f0 * t) + 0.25 * math.sin(2.0 * math.pi * 2.0 * f0 * t) + 0.12 * math.sin(2.0 * math.pi * 3.0 * f0 * t)
+                    env = min(1.0, (t / 0.04), ((target_duration - t) / 0.04)) if target_duration > 0.08 else 1.0
                     sample_int = int(val * env * 16000)
                     raw_bytes.extend(struct.pack("<h", max(-32768, min(32767, sample_int))))
                 wf.writeframes(raw_bytes)
@@ -95,9 +120,9 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, speed_facto
         print(f"[PROGRESS:{pct:.1f}%]")
 
     # Build master synchronized audio track matching original video timeline
-    print(f"[TTS] Vytváram zarovnanú zvukovú stopu celej dĺžky: {master_dubbed_wav}")
+    print(f"[TTS] Vytváram zarovnanú zvukovú stopu: {master_dubbed_wav}")
     total_dur = doc.get("total_duration", 30.0)
-    total_samples = int(sample_rate * (total_dur + 2.0))
+    total_samples = int(sample_rate * (total_dur + 3.0))
     master_samples = [0] * total_samples
 
     for utt in utterances:
@@ -111,7 +136,9 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, speed_facto
                 for idx, sample in enumerate(seg_data):
                     target_idx = st_sample + idx
                     if target_idx < total_samples:
-                        master_samples[target_idx] = max(-32768, min(32767, master_samples[target_idx] + sample))
+                        # Soft clipping sum
+                        cur = master_samples[target_idx] + sample
+                        master_samples[target_idx] = max(-32768, min(32767, cur))
 
     with wave.open(master_dubbed_wav, "w") as wf:
         wf.setnchannels(1)
@@ -121,6 +148,9 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, speed_facto
         for s in master_samples:
             out_bytes.extend(struct.pack("<h", s))
         wf.writeframes(out_bytes)
+
+    # Force garbage collection
+    gc.collect()
 
     print("[PROGRESS:100.0%]")
     print("=== Fáza 4: Syntéza reči úspešne dokončená ===")

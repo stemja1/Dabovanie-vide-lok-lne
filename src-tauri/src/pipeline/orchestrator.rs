@@ -101,7 +101,6 @@ impl PipelineOrchestrator {
             };
         }
 
-        // Sequential stage execution
         let stages_count = {
             let st = self.state.lock().await;
             st.stages.len()
@@ -198,7 +197,6 @@ impl PipelineOrchestrator {
             let mut st = self.state.lock().await;
             st.is_paused_for_review = false;
             st.is_running = true;
-            // Mark Review as completed
             for s in &mut st.stages {
                 if s.id == PipelineStageId::Review {
                     s.status = StageStatus::Completed;
@@ -289,7 +287,7 @@ impl PipelineOrchestrator {
             return Ok(());
         }
 
-        // Build CLI command for WSL
+        // Build CLI command with strict POSIX shell escaping for security
         let cmd = self.build_stage_command(stage_id, &input_wsl, &output_wsl, &meta_wsl, config);
 
         let res = WslExecutor::run_streaming_command(
@@ -297,7 +295,16 @@ impl PipelineOrchestrator {
             &cmd,
             log_tx.clone(),
             Some(Duration::from_secs(3600)),
+            Some(self.is_cancelled.clone()),
         ).await?;
+
+        // If cancelled by user
+        if res.error_kind == Some(ProcessErrorKind::Cancelled) {
+            let mut st = self.state.lock().await;
+            let s = &mut st.stages[stage_index];
+            s.status = StageStatus::Skipped;
+            return Ok(());
+        }
 
         // Handle failure and potential LatentSync OOM fallback to MuseTalk
         if !res.success {
@@ -323,6 +330,7 @@ impl PipelineOrchestrator {
                     &fallback_cmd,
                     log_tx.clone(),
                     Some(Duration::from_secs(3600)),
+                    Some(self.is_cancelled.clone()),
                 ).await?;
 
                 if retry_res.success {
@@ -358,7 +366,7 @@ impl PipelineOrchestrator {
         Ok(())
     }
 
-    /// Builds the specific bash command to invoke python script inside WSL
+    /// Builds the specific bash command using strict shell escaping for security
     fn build_stage_command(
         &self,
         stage_id: PipelineStageId,
@@ -367,17 +375,22 @@ impl PipelineOrchestrator {
         meta_wsl: &str,
         config: &AppConfig,
     ) -> String {
-        let python_bin = format!("{}/bin/python", config.venv_path.trim_end_matches('/'));
+        let python_bin = PathMapper::escape_bash_arg(&format!("{}/bin/python", config.venv_path.trim_end_matches('/')));
         let script_dir = format!("{}/scripts", config.workspace_dir.trim_end_matches('/'));
+
+        let q_in = PathMapper::escape_bash_arg(input_wsl);
+        let q_out = PathMapper::escape_bash_arg(output_wsl);
+        let q_meta = PathMapper::escape_bash_arg(meta_wsl);
+        let q_ws = PathMapper::escape_bash_arg(&config.workspace_dir);
 
         match stage_id {
             PipelineStageId::Demux => format!(
-                "{} {}/stage_1_demux.py --input '{}' --workspace '{}'",
-                python_bin, script_dir, input_wsl, config.workspace_dir
+                "{} {}/stage_1_demux.py --input {} --workspace {}",
+                python_bin, script_dir, q_in, q_ws
             ),
             PipelineStageId::Asr => format!(
-                "{} {}/stage_2_asr.py --input '{}' --workspace '{}' --engine {} --device {} --model '{}'",
-                python_bin, script_dir, input_wsl, config.workspace_dir,
+                "{} {}/stage_2_asr.py --input {} --workspace {} --engine {} --device {} --model {}",
+                python_bin, script_dir, q_in, q_ws,
                 match config.asr_engine {
                     crate::config::app_config::AsrEngine::WhisperSk => "whisper_sk",
                     crate::config::app_config::AsrEngine::FasterWhisper => "faster_whisper",
@@ -386,27 +399,30 @@ impl PipelineOrchestrator {
                     crate::config::app_config::AsrDevice::GpuRocm => "rocm",
                     crate::config::app_config::AsrDevice::Cpu => "cpu",
                 },
-                config.whisper_sk_model_id
+                PathMapper::escape_bash_arg(&config.whisper_sk_model_id)
             ),
             PipelineStageId::Translate => format!(
-                "{} {}/stage_3_translate.py --workspace '{}' --meta '{}' --model '{}' --src slk_Latn --tgt zho_Hans",
-                python_bin, script_dir, config.workspace_dir, meta_wsl, config.mt_model_id
+                "{} {}/stage_3_translate.py --workspace {} --meta {} --model {} --src {} --tgt {}",
+                python_bin, script_dir, q_ws, q_meta,
+                PathMapper::escape_bash_arg(&config.mt_model_id),
+                PathMapper::escape_bash_arg(&config.source_lang),
+                PathMapper::escape_bash_arg(&config.target_lang)
             ),
             PipelineStageId::Review => "echo 'Review stage completed'".to_string(),
             PipelineStageId::Tts => format!(
-                "{} {}/stage_4_tts.py --workspace '{}' --meta '{}' --engine {} --voice '{}' --speed {}",
-                python_bin, script_dir, config.workspace_dir, meta_wsl,
+                "{} {}/stage_4_tts.py --workspace {} --meta {} --engine {} --voice {} --speed {:.2}",
+                python_bin, script_dir, q_ws, q_meta,
                 match config.tts_engine {
                     crate::config::app_config::TtsEngine::Piper => "piper",
                     crate::config::app_config::TtsEngine::Kokoro => "kokoro",
                     crate::config::app_config::TtsEngine::CoquiXtts => "coqui",
                 },
-                config.tts_voice,
+                PathMapper::escape_bash_arg(&config.tts_voice),
                 config.tts_speed_factor
             ),
             PipelineStageId::Lipsync => format!(
-                "{} {}/stage_5_lipsync.py --input '{}' --workspace '{}' --meta '{}' --engine {} --batch-size {} --rocm-sdpa-fallback {}",
-                python_bin, script_dir, input_wsl, config.workspace_dir, meta_wsl,
+                "{} {}/stage_5_lipsync.py --input {} --workspace {} --meta {} --engine {} --batch-size {} --rocm-sdpa-fallback {}",
+                python_bin, script_dir, q_in, q_ws, q_meta,
                 match config.lipsync_engine {
                     LipsyncEngine::LatentSync15 => "latentsync",
                     LipsyncEngine::MuseTalk => "musetalk",
@@ -415,13 +431,13 @@ impl PipelineOrchestrator {
                 if config.rocm_sdpa_fallback { "1" } else { "0" }
             ),
             PipelineStageId::Mux => format!(
-                "{} {}/stage_6_mux.py --input '{}' --output '{}' --workspace '{}' --meta '{}' --ducking {}",
-                python_bin, script_dir, input_wsl, output_wsl, config.workspace_dir, meta_wsl, config.ducking_level_db
+                "{} {}/stage_6_mux.py --input {} --output {} --workspace {} --meta {} --ducking {:.1}",
+                python_bin, script_dir, q_in, q_out, q_ws, q_meta, config.ducking_level_db
             ),
         }
     }
 
-    /// Simulation runner for unit tests or UI development
+    /// Simulation runner for tests or UI development
     async fn run_mock_stage(
         &self,
         stage_id: PipelineStageId,
@@ -442,7 +458,7 @@ impl PipelineOrchestrator {
             if self.is_cancelled.load(Ordering::SeqCst) {
                 return Ok(());
             }
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
             let pct = (step as f32) * 20.0;
 
             {
