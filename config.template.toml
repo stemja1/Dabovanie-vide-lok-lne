@@ -1,0 +1,65 @@
+# ==============================================================================
+# Konfigurácia: AI Dabing Štúdio (Slovenčina do Čínštiny)
+# Optimalizované pre: Windows 11 + WSL2 (Ubuntu 24.04) + AMD RX 7700 XT (12 GB VRAM)
+# ==============================================================================
+
+# WSL2 a prostredie
+wsl_distro = "Ubuntu-24.04"
+venv_path = "~/.dubbing_env"
+workspace_dir = "~/ai_dubbing_workspace"
+models_cache_dir = "~/ai_dubbing_workspace/models"
+
+# ------------------------------------------------------------------------------
+# 1. ASR - Rozpoznávanie slovenskej reči
+# ------------------------------------------------------------------------------
+# asr_engine: "whisper_sk" (NaiveNeuron fine-tune) | "faster_whisper" (CTranslate2)
+asr_engine = "whisper_sk"
+
+# asr_device: "gpu_rocm" (Radeon RX 7700 XT) | "cpu" (Šetrí VRAM)
+asr_device = "gpu_rocm"
+whisper_sk_model_id = "NaiveNeuron/whisper-large-v3-sk"
+
+# ------------------------------------------------------------------------------
+# 2. MT - Neurónový Preklad (SK -> ZH)
+# ------------------------------------------------------------------------------
+mt_model_id = "facebook/nllb-200-distilled-600M"
+source_lang = "slk_Latn"
+target_lang = "zho_Hans"
+
+# ------------------------------------------------------------------------------
+# 3. TTS - Čínska Syntéza Reči (Licenčne konfigurovateľné)
+# ------------------------------------------------------------------------------
+# tts_engine:
+#   - "piper"     -> MIT licencia (Plne komerčne bezpečné, rýchle, CPU/ROCm)
+#   - "kokoro"    -> Apache 2.0 licencia (Komerčne bezpečné, 82M neurónový model)
+#   - "coqui_xtts"-> CPML licencia (POZOR: Len nekomerčné / hodnotiace použitie!)
+tts_engine = "piper"
+tts_voice = "zh_CN-huayan-medium"
+tts_speed_factor = 1.0
+
+# ------------------------------------------------------------------------------
+# 4. Lip-Sync - Animácia Pier a Tváre
+# ------------------------------------------------------------------------------
+# lipsync_engine:
+#   - "latentsync_1_5" -> LatentSync 1.5 (~7.5 GB VRAM, vysoká kvalita; vyhnite sa verzii 1.6!)
+#   - "musetalk"       -> MuseTalk (~4.5 GB VRAM, ultra-rýchly a ľahký model)
+lipsync_engine = "latentsync_1_5"
+lipsync_batch_size = 8
+
+# Automatický fallback na MuseTalk pri zachytení GPU OOM chyby
+lipsync_fallback_on_oom = true
+
+# ROCm Native SDPA patch: nahrádza CUDA xFormers za natívne PyTorch SDPA jadro
+rocm_sdpa_fallback = true
+
+# ------------------------------------------------------------------------------
+# 5. Audio & Video spracovanie
+# ------------------------------------------------------------------------------
+target_resolution = "original"
+ducking_level_db = -14.0
+
+# Pozastaviť pipeline po ASR+MT fáze pre kontrolu utterance_metadata.json v GUI
+auto_pause_for_review = true
+
+# Simulovaný režim pre testovanie bez hardvéru
+simulate_mode = false
