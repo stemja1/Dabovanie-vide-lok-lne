@@ -1,0 +1,28 @@
+# Rust
+/src-tauri/target/
+**/*.rs.bk
+Cargo.lock
+
+# Node / Web
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# AI Dubbing Workspace local data
+workspace/
+*.mp4
+*.wav
+*.onnx
+*.pt
+*.bin
