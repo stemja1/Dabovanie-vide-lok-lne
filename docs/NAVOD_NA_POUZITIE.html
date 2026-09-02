@@ -3,24 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Dabing Štúdio (SK → ZH) | Návod na kompiláciu a použitie</title>
+    <title>AI Dabing Štúdio (SK → ZH) | Kompletný a podrobný návod</title>
     <style>
         :root {
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-card: #182234;
-            --bg-code: #0b1120;
-            --border: #334155;
+            --bg-primary: #0b1120;
+            --bg-secondary: #131d31;
+            --bg-card: #1a2744;
+            --bg-code: #070d19;
+            --border: #233554;
             --border-highlight: #6366f1;
             --text-primary: #f8fafc;
             --text-secondary: #94a3b8;
             --text-muted: #64748b;
             --accent-blue: #38bdf8;
-            --accent-indigo: #6366f1;
-            --accent-purple: #a855f7;
-            --accent-emerald: #10b981;
-            --accent-amber: #f59e0b;
-            --accent-rose: #f43f5e;
+            --accent-indigo: #818cf8;
+            --accent-purple: #c084fc;
+            --accent-emerald: #34d399;
+            --accent-amber: #fbbf24;
+            --accent-rose: #fb7185;
             --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         }
@@ -35,24 +35,24 @@
             font-family: var(--font-sans);
             background-color: var(--bg-primary);
             color: var(--text-primary);
-            line-height: 1.65;
+            line-height: 1.7;
             padding: 0;
             margin: 0;
             -webkit-font-smoothing: antialiased;
         }
 
         .container {
-            max-width: 1100px;
+            max-width: 1150px;
             margin: 0 auto;
             padding: 40px 24px 80px;
         }
 
         header {
             text-align: center;
-            padding: 40px 0 30px;
+            padding: 50px 20px 35px;
             border-bottom: 1px solid var(--border);
             margin-bottom: 40px;
-            background: linear-gradient(180deg, rgba(99, 102, 241, 0.1) 0%, transparent 100%);
+            background: linear-gradient(180deg, rgba(99, 102, 241, 0.15) 0%, transparent 100%);
             border-radius: 16px;
         }
 
@@ -60,33 +60,33 @@
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 4px 12px;
+            padding: 6px 16px;
             border-radius: 9999px;
-            font-size: 0.8rem;
-            font-weight: 600;
+            font-size: 0.85rem;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.05em;
             margin-bottom: 16px;
-            background: rgba(99, 102, 241, 0.2);
-            color: #818cf8;
-            border: 1px solid rgba(99, 102, 241, 0.4);
+            background: rgba(99, 102, 241, 0.25);
+            color: #a5b4fc;
+            border: 1px solid rgba(99, 102, 241, 0.5);
         }
 
         h1 {
-            font-size: 2.5rem;
+            font-size: 2.6rem;
             font-weight: 800;
             letter-spacing: -0.025em;
             background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: 12px;
+            margin-bottom: 14px;
         }
 
         .subtitle {
             font-size: 1.15rem;
             color: var(--text-secondary);
-            max-width: 750px;
-            margin: 0 auto 20px;
+            max-width: 800px;
+            margin: 0 auto 24px;
         }
 
         .hardware-bar {
@@ -100,9 +100,9 @@
         .hw-chip {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
-            padding: 6px 14px;
-            border-radius: 8px;
-            font-size: 0.85rem;
+            padding: 8px 16px;
+            border-radius: 10px;
+            font-size: 0.9rem;
             color: var(--text-secondary);
         }
 
@@ -113,8 +113,8 @@
         nav.toc {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 24px;
+            border-radius: 14px;
+            padding: 24px 28px;
             margin-bottom: 40px;
         }
 
@@ -123,13 +123,13 @@
             text-transform: uppercase;
             letter-spacing: 0.05em;
             color: var(--accent-indigo);
-            margin-bottom: 12px;
+            margin-bottom: 14px;
         }
 
         nav.toc ol {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 8px 24px;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 10px 24px;
             padding-left: 20px;
         }
 
@@ -142,40 +142,49 @@
 
         nav.toc a:hover {
             color: var(--accent-blue);
+            text-decoration: underline;
         }
 
         section {
-            margin-bottom: 48px;
+            margin-bottom: 50px;
         }
 
         h2 {
-            font-size: 1.65rem;
+            font-size: 1.75rem;
             font-weight: 700;
             color: #f1f5f9;
-            margin-bottom: 20px;
-            padding-bottom: 8px;
+            margin-bottom: 24px;
+            padding-bottom: 10px;
             border-bottom: 2px solid var(--border);
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
         }
 
         h2 .section-num {
-            color: var(--accent-indigo);
-            font-size: 1.3rem;
+            background: linear-gradient(135deg, #6366f1, #38bdf8);
+            color: white;
+            font-size: 1rem;
+            font-weight: 800;
+            width: 34px;
+            height: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
         }
 
         h3 {
-            font-size: 1.2rem;
+            font-size: 1.25rem;
             font-weight: 600;
             color: var(--accent-blue);
-            margin: 24px 0 12px;
+            margin: 28px 0 14px;
         }
 
         p {
             color: var(--text-secondary);
             margin-bottom: 16px;
-            font-size: 1rem;
+            font-size: 1.02rem;
         }
 
         ul, ol {
@@ -185,7 +194,7 @@
         }
 
         li {
-            margin-bottom: 8px;
+            margin-bottom: 10px;
         }
 
         strong {
@@ -201,51 +210,61 @@
         }
 
         .card.featured {
-            border-color: var(--accent-indigo);
-            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.15);
+            border-color: #6366f1;
+            box-shadow: 0 4px 24px rgba(99, 102, 241, 0.2);
+            background: linear-gradient(180deg, rgba(30, 41, 59, 0.9) 0%, rgba(26, 39, 68, 0.9) 100%);
+        }
+
+        .card.danger {
+            border-color: rgba(251, 113, 133, 0.6);
+            background: rgba(251, 113, 133, 0.05);
         }
 
         .card-title {
-            font-size: 1.15rem;
+            font-size: 1.2rem;
             font-weight: 700;
             color: var(--text-primary);
-            margin-bottom: 12px;
+            margin-bottom: 14px;
             display: flex;
             align-items: center;
             justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
         }
 
         .badge {
             font-size: 0.75rem;
-            padding: 2px 8px;
+            padding: 3px 10px;
             border-radius: 6px;
-            font-weight: 600;
+            font-weight: 700;
+            text-transform: uppercase;
         }
 
-        .badge-green { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+        .badge-green { background: rgba(52, 211, 153, 0.2); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.4); }
         .badge-blue { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); }
-        .badge-amber { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
-        .badge-purple { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
+        .badge-amber { background: rgba(251, 191, 36, 0.2); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.4); }
+        .badge-rose { background: rgba(251, 113, 133, 0.2); color: #fb7185; border: 1px solid rgba(251, 113, 133, 0.4); }
+        .badge-purple { background: rgba(192, 132, 252, 0.2); color: #c084fc; border: 1px solid rgba(192, 132, 252, 0.4); }
 
         pre {
             background: var(--bg-code);
             border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 16px;
+            padding: 16px 18px;
             overflow-x: auto;
             font-family: var(--font-mono);
-            font-size: 0.9rem;
+            font-size: 0.92rem;
             color: #e2e8f0;
-            margin-bottom: 16px;
-            line-height: 1.5;
+            margin: 14px 0 18px;
+            line-height: 1.55;
         }
 
         code {
             font-family: var(--font-mono);
-            background: rgba(255, 255, 255, 0.08);
-            padding: 2px 6px;
+            background: rgba(255, 255, 255, 0.09);
+            padding: 2px 7px;
             border-radius: 4px;
-            font-size: 0.88em;
+            font-size: 0.9em;
             color: #38bdf8;
         }
 
@@ -255,21 +274,10 @@
             color: inherit;
         }
 
-        .cmd-comment {
-            color: #64748b;
-        }
-
-        .cmd-kw {
-            color: #f472b6;
-        }
-
-        .cmd-str {
-            color: #a3e635;
-        }
-
-        .cmd-opt {
-            color: #38bdf8;
-        }
+        .cmd-comment { color: #64748b; font-style: italic; }
+        .cmd-kw { color: #f472b6; font-weight: 600; }
+        .cmd-str { color: #a3e635; }
+        .cmd-opt { color: #38bdf8; }
 
         .grid-2 {
             display: grid;
@@ -289,21 +297,22 @@
             align-items: center;
             background: var(--bg-secondary);
             border: 1px solid var(--border);
-            padding: 12px 16px;
-            border-radius: 8px;
+            padding: 14px 18px;
+            border-radius: 10px;
             gap: 16px;
         }
 
         .step-num {
-            width: 32px;
-            height: 32px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
-            background: var(--accent-indigo);
+            background: linear-gradient(135deg, #6366f1, #38bdf8);
             color: white;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 700;
+            font-weight: 800;
+            font-size: 1.1rem;
             flex-shrink: 0;
         }
 
@@ -312,28 +321,31 @@
         }
 
         .step-content h4 {
-            font-size: 0.95rem;
+            font-size: 1rem;
             margin-bottom: 2px;
             color: var(--text-primary);
         }
 
         .step-content p {
-            font-size: 0.85rem;
+            font-size: 0.88rem;
             margin: 0;
             color: var(--text-muted);
         }
 
         .step-tag {
-            font-size: 0.75rem;
+            font-size: 0.8rem;
             color: var(--accent-blue);
             font-family: var(--font-mono);
+            background: rgba(56, 189, 248, 0.1);
+            padding: 4px 10px;
+            border-radius: 6px;
             flex-shrink: 0;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            margin: 16px 0 24px;
+            margin: 18px 0 26px;
             font-size: 0.95rem;
         }
 
@@ -346,38 +358,58 @@
         th {
             background: var(--bg-secondary);
             color: var(--text-primary);
-            font-weight: 600;
+            font-weight: 700;
         }
 
         tr:hover td {
-            background: rgba(255, 255, 255, 0.02);
+            background: rgba(255, 255, 255, 0.03);
         }
 
         .callout {
-            border-left: 4px solid;
-            padding: 16px 20px;
-            border-radius: 0 8px 8px 0;
-            margin: 20px 0;
+            border-left: 5px solid;
+            padding: 18px 22px;
+            border-radius: 0 10px 10px 0;
+            margin: 22px 0;
             background: var(--bg-secondary);
         }
 
         .callout-info { border-color: var(--accent-blue); }
         .callout-warning { border-color: var(--accent-amber); }
+        .callout-danger { border-color: var(--accent-rose); }
         .callout-success { border-color: var(--accent-emerald); }
 
         .callout h4 {
-            font-size: 0.95rem;
+            font-size: 1.05rem;
             font-weight: 700;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .callout-info h4 { color: var(--accent-blue); }
         .callout-warning h4 { color: var(--accent-amber); }
+        .callout-danger h4 { color: var(--accent-rose); }
         .callout-success h4 { color: var(--accent-emerald); }
 
         .callout p {
             margin: 0;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
+        }
+
+        .error-card {
+            background: rgba(251, 113, 133, 0.08);
+            border: 1px solid rgba(251, 113, 133, 0.3);
+            border-radius: 10px;
+            padding: 18px;
+            margin-bottom: 16px;
+        }
+
+        .error-card h4 {
+            color: var(--accent-rose);
+            font-family: var(--font-mono);
+            font-size: 0.95rem;
+            margin-bottom: 8px;
         }
 
         footer {
@@ -393,8 +425,12 @@
             text-decoration: none;
         }
 
+        footer a:hover {
+            text-decoration: underline;
+        }
+
         @media (max-width: 768px) {
-            h1 { font-size: 1.85rem; }
+            h1 { font-size: 2rem; }
             .container { padding: 20px 16px; }
             .grid-2 { grid-template-columns: 1fr; }
         }
@@ -404,9 +440,9 @@
 
 <div class="container">
     <header>
-        <div class="badge-pill">Tauri v2 + Rust + React + ROCm SDPA</div>
+        <div class="badge-pill">Verzia 1.0.5 • Pre Windows 11 + WSL2 + AMD RX 7700 XT</div>
         <h1>AI Dabing Štúdio (SK → ZH)</h1>
-        <p class="subtitle">Kompletný návod na inštaláciu, kompiláciu a používanie desktopovej aplikácie pre plne lokálny AI dabing videí zo slovenčiny do čínštiny.</p>
+        <p class="subtitle">Kompletný sprievodca inštaláciou, spustením a obsluhou aplikácie pre plne lokálny preklad a dabing videa zo slovenčiny do čínštiny s presnou synchronizáciou pier.</p>
         
         <div class="hardware-bar">
             <div class="hw-chip">GPU: <strong>AMD Radeon RX 7700 XT (12 GB VRAM)</strong></div>
@@ -419,244 +455,238 @@
     <nav class="toc">
         <h3>Obsah návodu</h3>
         <ol>
-            <li><a href="#architektura">1. Architektúra a princíp fungovania</a></li>
-            <li><a href="#prerekvizity">2. Požiadavky a prerekvizity (Windows 11)</a></li>
-            <li><a href="#kompilacia">3. Ako aplikáciu skompilovať (Dev & Release)</a></li>
-            <li><a href="#pouzitie">4. Návod na použitie krok za krokom</a></li>
-            <li><a href="#vram-profil">5. VRAM manažment a sekvenčné fázy</a></li>
-            <li><a href="#licencie">6. Licencie a komerčná bezpečnosť modelov</a></li>
-            <li><a href="#troubleshooting">7. Riešenie problémov a časté otázky (FAQ)</a></li>
+            <li><a href="#vysvetlenie-chyb">1. Vysvetlenie bežných chýb z PowerShellu</a></li>
+            <li><a href="#rychla-instalacia">2. Rýchla inštalácia nástrojov (1-Click Skript)</a></li>
+            <li><a href="#manualna-instalacia">3. Manuálna inštalácia krok za krokom</a></li>
+            <li><a href="#spustenie-aplikacie">4. Ako spustiť aplikáciu</a></li>
+            <li><a href="#setup-wizard">5. Sprievodca inštaláciou modelov (Setup Wizard)</a></li>
+            <li><a href="#cely-postup-dabingu">6. Postup dabovania videa v aplikácii</a></li>
+            <li><a href="#vram-profil">7. VRAM manažment a sekvenčné fázy</a></li>
+            <li><a href="#faq">8. Časté otázky a riešenie problémov</a></li>
         </ol>
     </nav>
 
-    <!-- 1. ARCHITEKTURA -->
-    <section id="architektura">
-        <h2><span class="section-num">1.</span> Architektúra a princíp fungovania</h2>
-        <p>Aplikácia kombinuje moderné desktopové GUI v <strong>Tauri v2 (Rust + React + Tailwind)</strong> s výkonným výpočtovým prostredím <strong>Ubuntu 24.04 v prostredí WSL2</strong>, kde prebieha hardvérovo akcelerovaný beh AI neurónových sietí cez <strong>AMD ROCm 6.2/6.4</strong>.</p>
-        
-        <div class="pipeline-diagram">
-            <div class="pipeline-step">
-                <div class="step-num">1</div>
-                <div class="step-content">
-                    <h4>FFmpeg Demuxing & Audio Extrakcia</h4>
-                    <p>Izolácia pôvodného slovenského zvuku z videa, normalizácia na 16kHz WAV mono.</p>
-                </div>
-                <div class="step-tag">CPU / FFmpeg CLI</div>
-            </div>
-            <div class="pipeline-step">
-                <div class="step-num">2</div>
-                <div class="step-content">
-                    <h4>Slovenský ASR (Whisper-SK / faster-whisper)</h4>
-                    <p>Automatický prepis slovenskej reči na text s presnými časovými značkami slov a vetných celkov.</p>
-                </div>
-                <div class="step-tag">ROCm GPU (~5.6 GB VRAM)</div>
-            </div>
-            <div class="pipeline-step">
-                <div class="step-num">3</div>
-                <div class="step-content">
-                    <h4>Preklad SK → ZH (NLLB-200 600M)</h4>
-                    <p>Neurónový preklad slovenského textu do zjednodušenej čínštiny (zho_Hans) so zachovaním kontextu.</p>
-                </div>
-                <div class="step-tag">ROCm GPU (~2.5 GB VRAM)</div>
-            </div>
-            <div class="pipeline-step">
-                <div class="step-num">4</div>
-                <div class="step-content">
-                    <h4>Interaktívny Utterance Metadata Editor</h4>
-                    <p>Pozastavenie pipeline v GUI – používateľ môže skontrolovať preklad, upraviť text, rozdeliť či zlúčiť vety.</p>
-                </div>
-                <div class="step-tag">GUI Interakcia (0 GB VRAM)</div>
-            </div>
-            <div class="pipeline-step">
-                <div class="step-num">5</div>
-                <div class="step-content">
-                    <h4>Čínska Syntéza Reči (Piper / Kokoro TTS)</h4>
-                    <p>Generovanie čínskeho dabingu s automatickým prispôsobením rýchlosti dĺžke pôvodných slovenských úsekov.</p>
-                </div>
-                <div class="step-tag">Piper MIT / Kokoro Apache</div>
-            </div>
-            <div class="pipeline-step">
-                <div class="step-num">6</div>
-                <div class="step-content">
-                    <h4>Lip-Sync Animácia (LatentSync 1.5 + SDPA Patch)</h4>
-                    <p>Presynchronizácia pier postavy podľa vygenerovaného čínskeho audia. Pri OOM záchranný fallback na MuseTalk.</p>
-                </div>
-                <div class="step-tag">ROCm Native SDPA (~7.6 GB VRAM)</div>
-            </div>
-            <div class="pipeline-step">
-                <div class="step-num">7</div>
-                <div class="step-content">
-                    <h4>Finálny Muxing & Audio Ducking</h4>
-                    <p>Zmiešanie pôvodného podmazu a dabingu (-14 dB ducking), vpečenie čínskych titulkov a export videa.</p>
-                </div>
-                <div class="step-tag">FFmpeg Post-processing</div>
-            </div>
+    <!-- 1. VYSVETLENIE CHYB -->
+    <section id="vysvetlenie-chyb">
+        <h2><span class="section-num">1</span> Prečo vznikli chyby v PowerShell termináli?</h2>
+        <p>Ak sa vám pri prvom spúšťaní zobrazili červené chybové hlášky, tu je presné vysvetlenie, prečo k nim došlo a ako ich jednoducho odstrániť:</p>
+
+        <div class="error-card">
+            <h4>❌ Chyba: <code>npm : The term 'npm' is not recognized...</code></h4>
+            <p><strong>Prečo nastala:</strong> Nástroj <code>npm</code> (Node Package Manager) je správca balíčkov pre jazyk JavaScript a je súčasťou inštalácie programu <strong>Node.js</strong>. Na vašom počítači ešte <strong>Node.js nie je nainštalovaný</strong>, preto Windows príkaz <code>npm</code> nepozná.</p>
+            <p><strong>Riešenie:</strong> Nainštalujte Node.js (viď Krok 2 alebo Krok 3 nižšie).</p>
+        </div>
+
+        <div class="error-card">
+            <h4>❌ Chyba: <code>rustup : The term 'rustup' is not recognized...</code></h4>
+            <p><strong>Prečo nastala:</strong> Rust sa síce úspešne stiahol a nainštaloval cez <code>winget</code>, ale <strong>otvorené okno PowerShellu si nepamätalo novo vytvorenú cestu k programu</strong> (premennú PATH). Nové programy sú v príkazovom riadku dostupné až po zatvorení a opätovnom otvorení PowerShellu.</p>
+            <p><strong>Riešenie:</strong> Stačí zavrieť PowerShell a otvoriť nový.</p>
+        </div>
+
+        <div class="error-card">
+            <h4>❌ Chyba: <code>The requested operation requires elevation.</code></h4>
+            <p><strong>Prečo nastala:</strong> Príkaz <code>wsl --install</code> zapína systémové virtualizačné komponenty vo Windows 11, čo z bezpečnostných dôvodov vyžaduje práva administrátora.</p>
+            <p><strong>Riešenie:</strong> PowerShell je potrebné otvoriť cez <strong>"Spustiť ako správca" (Run as Administrator)</strong>.</p>
         </div>
     </section>
 
-    <!-- 2. PREREKVIZITY -->
-    <section id="prerekvizity">
-        <h2><span class="section-num">2.</span> Požiadavky a prerekvizity (Windows 11)</h2>
-        <p>Pre správne zostavenie a beh na počítači s Windows 11 a AMD Radeon RX 7700 XT sú potrebné nasledujúce nástroje:</p>
+    <!-- 2. RYCHLA INSTALACIA -->
+    <section id="rychla-instalacia">
+        <h2><span class="section-num">2</span> Rýchla inštalácia nástrojov (Automatický 1-Click Skript)</h2>
+        <p>Aby ste nemuseli jednotlivé balíky inštalovať manuálne, v projekte je pripravený automatický PowerShell skript <strong><code>install_prerequisites.ps1</code></strong>, ktorý všetko skontroluje, nainštaluje a nastaví.</p>
+
+        <div class="card featured">
+            <div class="card-title">
+                <span>Automatická inštalácia cez PowerShell (Správca)</span>
+                <span class="badge badge-green">Najjednoduchší spôsob</span>
+            </div>
+            <ol>
+                <li>Stlačte klávesovú skratku <strong>Win + X</strong> a vyberte <strong>Terminál (správca)</strong> alebo vyhľadajte <em>PowerShell</em> v menu Štart, kliknite pravým tlačidlom myši a zvoľte <strong>"Spustiť ako správca"</strong>.</li>
+                <li>Prejdite do priečinka projektu a spustite inštalačný skript:</li>
+            </ol>
+            <pre><code><span class="cmd-comment"># 1. Prechod do priečinka stiahnutého projektu:</span>
+<span class="cmd-kw">cd</span> C:\Dabovanie-vide-lok-lne-main
+
+<span class="cmd-comment"># 2. Spustenie automatického inštalátora:</span>
+<span class="cmd-kw">powershell</span> -ExecutionPolicy Bypass -File .\install_prerequisites.ps1</code></pre>
+            <p>Skript automaticky skontroluje a nainštaluje: <strong>Node.js LTS, Rust toolchain, Visual Studio C++ Build Tools a WSL2 Ubuntu-24.04</strong>.</p>
+        </div>
+    </section>
+
+    <!-- 3. MANUALNA INSTALACIA -->
+    <section id="manualna-instalacia">
+        <h2><span class="section-num">3</span> Manuálna inštalácia krok za krokom</h2>
+        <p>Ak preferujete manuálnu inštaláciu cez oficiálne inštalátory alebo jednotlivé príkazy, postupujte podľa týchto krokov:</p>
 
         <div class="grid-2">
             <div class="card">
                 <div class="card-title">
-                    <span>1. Windows 11 & WSL2</span>
-                    <span class="badge badge-blue">Hostiteĺ</span>
+                    <span>Krok A: Inštalácia Node.js & npm</span>
+                    <span class="badge badge-blue">Frontend</span>
                 </div>
-                <ul>
-                    <li>Windows 11 (build 22621 alebo novší).</li>
-                    <li>Nainštalovaný <strong>AMD Software: Adrenalin Edition</strong> s aktuálnym ovládačom.</li>
-                    <li>WSL2 s distribúciou <code>Ubuntu-24.04</code>.</li>
-                </ul>
-                <pre><code><span class="cmd-comment"># Inštalácia WSL2 z PowerShellu (ako Administrátor):</span>
-<span class="cmd-kw">wsl</span> --install -d Ubuntu-24.04</code></pre>
+                <p>Node.js poskytuje prostredie pre beh webového používateľského rozhrania a nástroj <code>npm</code>.</p>
+                <ol>
+                    <li>Stiahnite a nainštalujte verziu <strong>LTS</strong> z oficiálnej stránky: <a href="https://nodejs.org" target="_blank" style="color:var(--accent-blue);">https://nodejs.org</a>.</li>
+                    <li><em>Alebo spustite v PowerShell (Správca):</em></li>
+                </ol>
+                <pre><code><span class="cmd-kw">winget</span> install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements</code></pre>
             </div>
 
             <div class="card">
                 <div class="card-title">
-                    <span>2. Vývojové prostredie Rust & Node</span>
-                    <span class="badge badge-green">Vývoj</span>
+                    <span>Krok B: Inštalácia Rust & C++ Tools</span>
+                    <span class="badge badge-purple">Backend</span>
                 </div>
-                <ul>
-                    <li><strong>Node.js 20+</strong> (LTS) a <strong>npm</strong>.</li>
-                    <li><strong>Rust toolchain (1.78+)</strong>: nainštalujte cez <a href="https://rustup.rs" style="color:var(--accent-blue);">rustup.rs</a>.</li>
-                    <li><strong>Visual Studio 2022 C++ Build Tools</strong> (vyžadované pre kompiláciu Tauri na Windows).</li>
-                </ul>
-                <pre><code><span class="cmd-comment"># Inštalácia Rustu (PowerShell):</span>
-<span class="cmd-kw">winget</span> install Rustlang.Rustup
-<span class="cmd-kw">rustup</span> default stable</code></pre>
+                <p>Rust kompiluje jadro desktopovej aplikácie a komunikuje s WSL2 a GPU.</p>
+                <ol>
+                    <li>Stiahnite <strong>rustup-init.exe</strong> z <a href="https://rustup.rs" target="_blank" style="color:var(--accent-indigo);">https://rustup.rs</a> a spustite ho.</li>
+                    <li>Zvoľte možnosť <strong>1 (Proceed with standard installation)</strong>.</li>
+                    <li>Nainštalujte <strong>C++ Build Tools</strong> (ak vás inštalátor vyzve).</li>
+                </ol>
+                <pre><code><span class="cmd-kw">winget</span> install Rustlang.Rustup
+<span class="cmd-kw">winget</span> install Microsoft.VisualStudio.2022.BuildTools</code></pre>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <span>Krok C: WSL2 a Ubuntu-24.04 pre AI modely</span>
+                <span class="badge badge-amber">AI Výpočty</span>
+            </div>
+            <p>V prostredí WSL2 bežia Python skripty pre Whisper, NLLB preklad, TTS syntézu a LatentSync lip-sync s priamou akceleráciou cez AMD ROCm.</p>
+            <pre><code><span class="cmd-comment"># V PowerShell (Spustiť ako správca):</span>
+<span class="cmd-kw">wsl</span> --install -d Ubuntu-24.04</code></pre>
+            <div class="callout callout-info">
+                <h4>Čo očakávať po inštalácii Ubuntu</h4>
+                <p>Otvorí sa čierne okno Ubuntu, ktoré vás požiada o zadanie <strong>nového používateľského mena</strong> (napr. <code>user</code>) a <strong>hesla</strong>. Toto heslo si zapamätajte, používa sa pri inštalácii Linux balíčkov.</p>
             </div>
         </div>
     </section>
 
-    <!-- 3. KOMPILACIA -->
-    <section id="kompilacia">
-        <h2><span class="section-num">3.</span> Ako aplikáciu skompilovať</h2>
+    <!-- 4. SPUSTENIE APLIKACIE -->
+    <section id="spustenie-aplikacie">
+        <h2><span class="section-num">4</span> Ako spustiť aplikáciu</h2>
+        <p>Po dokončení inštalácie prerekvizít <strong>zatvorte všetky staré okná PowerShellu</strong> a otvorte nový terminál (už nie je potrebný správca).</p>
 
-        <div class="card featured">
-            <div class="card-title">
-                <span>Rýchly štart: Vývojový režim (Live Dev Server)</span>
-                <span class="badge badge-purple">Odporúčané</span>
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-title">
+                    <span>Možnosť 1: Dvojklik na <code>start_app.bat</code></span>
+                    <span class="badge badge-green">Pohodlné</span>
+                </div>
+                <p>V Prieskumníkovi Windows otvorte priečinok <code>C:\Dabovanie-vide-lok-lne-main</code> a dvakrát kliknite na súbor <strong><code>start_app.bat</code></strong>.</p>
+                <p>Súbor automaticky skontroluje prostredie, stiahne knižnice a spustí okno aplikácie.</p>
             </div>
-            <p>Tento príkaz spustí Vite dev server pre frontend a súčasne skompiluje a otvorí natívne desktopové okno Tauri aplikácie s okamžitým hot-reloadom:</p>
-            <pre><code><span class="cmd-comment"># 1. Prejdite do koreňového priečinka projektu:</span>
-<span class="cmd-kw">cd</span> Dabovanie-vide-lok-lne
 
-<span class="cmd-comment"># 2. Nainštalujte frontendové závislosti (React, Tailwind, Lucide):</span>
+            <div class="card">
+                <div class="card-title">
+                    <span>Možnosť 2: Cez bežný PowerShell</span>
+                    <span class="badge badge-blue">Vývojársky režim</span>
+                </div>
+                <p>V novom okne PowerShellu zadajte:</p>
+                <pre><code><span class="cmd-comment"># 1. Prejdite do projektu:</span>
+<span class="cmd-kw">cd</span> C:\Dabovanie-vide-lok-lne-main
+
+<span class="cmd-comment"># 2. Nainštalujte frontend balíčky (stačí vykonať iba raz):</span>
 <span class="cmd-kw">npm</span> install
 
-<span class="cmd-comment"># 3. Spustite vývojový režim aplikácie:</span>
+<span class="cmd-comment"># 3. Spustite aplikáciu:</span>
 <span class="cmd-kw">npm</span> run tauri dev</code></pre>
+            </div>
         </div>
 
-        <h3>Zostavenie finálnej Release verzie (.exe / .msi inštalátor)</h3>
-        <p>Pre vytvorenie samostatného inštalačného balíčka pripraveného na distribúciu a produkčné nasadenie použite:</p>
-        <pre><code><span class="cmd-comment"># Vytvorenie optimalizovanej release binárky a Windows inštalátora:</span>
-<span class="cmd-kw">npm</span> run tauri build
-
-<span class="cmd-comment"># Výstupné súbory nájdete v:</span>
-<span class="cmd-str">src-tauri/target/release/ai-dubbing-orchestrator.exe</span>
-<span class="cmd-str">src-tauri/target/release/bundle/msi/AI Dabing Studio_0.1.0_x64_en-US.msi</span></code></pre>
-
-        <h3>Spustenie automatizovaných testov (Test Suite)</h3>
-        <p>Projekt obsahuje <strong>23 integračných a jednotkových testov</strong> overujúcich VRAM rozpočty, bezpečnosť ciest a parsovanie:</p>
-        <pre><code><span class="cmd-kw">cd</span> src-tauri
-<span class="cmd-kw">cargo</span> test
-
-<span class="cmd-comment"># Kontrola linteru a formátovania:</span>
-<span class="cmd-kw">cargo</span> fmt --check
-<span class="cmd-kw">cargo</span> clippy --all-targets --all-features -- -D warnings</code></pre>
+        <div class="callout callout-success">
+            <h4>Výsledok</h4>
+            <p>Po skompilovaní sa vám na ploche otvorí tmavé okno desktopovej aplikácie <strong>AI Dabing Štúdio (SK → ZH)</strong>.</p>
+        </div>
     </section>
 
-    <!-- 4. POUZITIE KROK ZA KROKOM -->
-    <section id="pouzitie">
-        <h2><span class="section-num">4.</span> Návod na použitie krok za krokom</h2>
+    <!-- 5. SETUP WIZARD -->
+    <section id="setup-wizard">
+        <h2><span class="section-num">5</span> Sprievodca inštaláciou modelov (Setup Wizard)</h2>
+        <p>Aplikácia obsahuje vstavaného inteligentného sprievodcu, ktorý za vás automaticky stiahne a nakonfiguruje všetky AI modely priamo v prostredí WSL2.</p>
 
         <div class="card">
-            <div class="card-title">
-                <span>Krok 1: Prvé spustenie a Setup Wizard (Diagnostika)</span>
-                <span class="badge badge-blue">Setup</span>
-            </div>
-            <p>Pri prvom spustení otvorte záložku <strong>"Setup Wizard & Diagnostika"</strong>. Systém automaticky skontroluje pripravenosť prostredia:</p>
             <ol>
-                <li>Kliknite na <strong>"Spustiť diagnostiku"</strong> – overí sa stav WSL2, balíky Ubuntu, PyTorch ROCm a prítomnosť modelov.</li>
-                <li>Kliknite na tlačidlo <strong>"Opraviť / Inštalovať"</strong> pri jednotlivých krokoch (WSL2, balíčky, Python venv, Lip-sync repozitáre).</li>
-                <li>V záložke <strong>"Sťahovanie modelov"</strong> si jedným klikom stiahnite potrebné váhy (Whisper-SK, NLLB-200, Piper hlasy).</li>
+                <li>V hornej lište aplikácie kliknite na záložku <strong>"Setup Wizard & Diagnostika"</strong>.</li>
+                <li>Kliknite na <strong>"Spustiť kompletnú diagnostiku"</strong> – aplikácia otestuje prítomnosť WSL2, Python venvu, PyTorch ROCm a modelov.</li>
+                <li>Kliknite na <strong>"Spustiť automatickú inštaláciu"</strong>. Aplikácia v správnom poradí pripraví:
+                    <ul>
+                        <li>Virtuálne prostredie Python venv v Ubuntu 24.04</li>
+                        <li>PyTorch s podporou pre AMD ROCm (RX 7700 XT)</li>
+                        <li>Stiahnutie modelov Whisper-SK, NLLB-200 a Piper hlasov</li>
+                        <li>Naklonovanie a nastavenie repozitára LatentSync 1.5 a MuseTalk</li>
+                    </ul>
+                </li>
             </ol>
             <div class="callout callout-info">
-                <h4>Tip k Setup Wizardu</h4>
-                <p>Inštalátor je <strong>idempotentný</strong>. Ak niektorý krok zlyhá (napr. prerušený internet), stačí ho spustiť znova – už stiahnuté časti sa nebudú opakovať.</p>
+                <h4>Idempotentnosť a opakované pokusy</h4>
+                <p>Každý krok inštalátora je bezpečné spustiť viackrát. Ak vám napríklad vypadne internet pri sťahovaní modelu, stačí kliknúť na <em>"Skúsiť znova"</em> pri konkrétnom kroku.</p>
             </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">
-                <span>Krok 2: Konfigurácia v Nastaveniach (Settings)</span>
-                <span class="badge badge-purple">Konfigurácia</span>
-            </div>
-            <p>V pravom hornom rohu otvorte <strong>"Nastavenia"</strong> a prispôsobte si parametre pipeline:</p>
-            <ul>
-                <li><strong>ASR Engine:</strong> Whisper-SK (ROCm GPU) pre maximálnu presnosť alebo faster-whisper.</li>
-                <li><strong>TTS Engine:</strong> <code>Piper (MIT)</code> alebo <code>Kokoro (Apache 2.0)</code> pre plnú komerčnú bezpečnosť.</li>
-                <li><strong>Lip-Sync Engine:</strong> <code>LatentSync 1.5</code> (najvyššia kvalita) s ponechaným zapnutým <strong>OOM Fallbackom na MuseTalk</strong>.</li>
-                <li><strong>ROCm SDPA Fallback:</strong> Ponechajte <strong>zapnuté (ON)</strong> – nahrádza nekompatibilný xFormers natívnym PyTorch SDPA jadrom.</li>
-                <li><strong>Pozastaviť pred TTS na kontrolu:</strong> Zapnuté – umožní vám skontrolovať a upraviť preklad.</li>
-            </ul>
-        </div>
-
-        <div class="card">
-            <div class="card-title">
-                <span>Krok 3: Spustenie dabingu a nahratie videa</span>
-                <span class="badge badge-green">Pipeline Studio</span>
-            </div>
-            <p>V záložke <strong>"Pipeline Štúdio"</strong>:</p>
-            <ol>
-                <li>Pretiahnite video súbor (<code>.mp4</code>, <code>.mkv</code>, <code>.mov</code>) do zóny <strong>Video Dropzone</strong> alebo kliknite a vyberte súbor.</li>
-                <li>Panel <strong>VRAM & RAM Meter</strong> vám okamžite ukáže vypočítanú spotrebu pamäte pre zvolený hardvér (RX 7700 XT).</li>
-                <li>Kliknite na veľké modré tlačidlo <strong>"Spustiť AI Dabingový Pipeline"</strong>.</li>
-                <li>V reálnom čase uvidíte priebeh jednotlivých fáz a detailné výstupy v <strong>Log Paneli</strong>.</li>
-            </ol>
-        </div>
-
-        <div class="card">
-            <div class="card-title">
-                <span>Krok 4: Interaktívna kontrola v Utterance Editore</span>
-                <span class="badge badge-amber">Kvalita prekladu</span>
-            </div>
-            <p>Po dokončení fázy 3 (Preklad) sa pipeline automaticky pozastaví a prepne do záložky <strong>"Editor Metadát"</strong>:</p>
-            <ul>
-                <li>V tabuľke vidíte zoznam všetkých rozpoznaných viet so slovenským a čínskym textom a časovaním.</li>
-                <li><strong>Priama editácia:</strong> Môžete prepísať čínsky preklad, ak chcete použiť iné synonymá alebo upraviť formuláciu.</li>
-                <li><strong>Rozdelenie vety (Split):</strong> Ak je veta pridlhá, kliknite na <em>Rozdeliť</em> a zadajte čas delenia.</li>
-                <li><strong>Zlúčenie viet (Merge):</strong> Susediace krátke vety môžete spojiť do jedného plynulého celku.</li>
-                <li>Po kontrole kliknite na <strong>"Uložiť a pokračovať v generovaní TTS & Lip-sync"</strong>.</li>
-            </ul>
-        </div>
-
-        <div class="card">
-            <div class="card-title">
-                <span>Krok 5: Prehrávač a export hotového videa</span>
-                <span class="badge badge-blue">Finálny výsledok</span>
-            </div>
-            <p>Po dokončení záverečného muxingu sa v záložke <strong>"Prehrávač Videa"</strong> sprístupní hotové dabované video s čínskou rečou a synchronizovanými perami. Kliknutím na <strong>"Otvoriť v Prieskumníkovi"</strong> prejdete priamo k exportovanému <code>.mp4</code> súboru.</p>
         </div>
     </section>
 
-    <!-- 5. VRAM PROFIL -->
+    <!-- 6. CELY POSTUP DABINGU -->
+    <section id="cely-postup-dabingu">
+        <h2><span class="section-num">6</span> Postup dabovania videa v aplikácii</h2>
+
+        <div class="pipeline-diagram">
+            <div class="pipeline-step">
+                <div class="step-num">1</div>
+                <div class="step-content">
+                    <h4>Nahratie videa (Dropzone)</h4>
+                    <p>V záložke <em>Pipeline Štúdio</em> pretiahnite videosúbor (MP4, MKV, MOV) alebo kliknite na tlačidlo "Vybrať video".</p>
+                </div>
+                <div class="step-tag">Vstupný súbor</div>
+            </div>
+            <div class="pipeline-step">
+                <div class="step-num">2</div>
+                <div class="step-content">
+                    <h4>Spustenie pipeline</h4>
+                    <p>Kliknite na tlačidlo <strong>"Spustiť AI Dabingový Pipeline"</strong>. Prebehne extrakcia audia, rozpoznanie slovenskej reči (Whisper) a neurónový preklad (NLLB-200).</p>
+                </div>
+                <div class="step-tag">Fázy 1 až 3</div>
+            </div>
+            <div class="pipeline-step">
+                <div class="step-num">3</div>
+                <div class="step-content">
+                    <h4>Kontrola v Editore Metadát (Pozastavenie pred TTS)</h4>
+                    <p>Pipeline sa automaticky prepne do <strong>Editora Metadát</strong>. Tu si môžete prečítať preložené čínske vety, opraviť text, prípadne vety rozdeliť (Split) či zlúčiť (Merge).</p>
+                </div>
+                <div class="step-tag">Interaktívna kontrola</div>
+            </div>
+            <div class="pipeline-step">
+                <div class="step-num">4</div>
+                <div class="step-content">
+                    <h4>Generovanie reči a synchronizácia pier</h4>
+                    <p>Kliknite na <strong>"Uložiť a pokračovať"</strong>. Spustí sa syntéza čínskeho hlasu (Piper/Kokoro) a neurónová animácia pier na videu (LatentSync 1.5).</p>
+                </div>
+                <div class="step-tag">Fázy 5 a 6</div>
+            </div>
+            <div class="pipeline-step">
+                <div class="step-num">5</div>
+                <div class="step-content">
+                    <h4>Prehratie a export hotového videa</h4>
+                    <p>V záložke <em>Prehrávač Videa</em> si môžete okamžite prehrať hotový dabing. Tlačidlo <strong>"Otvoriť priečinok s výstupom"</strong> vám otvorí výsledný MP4 súbor v Prieskumníkovi Windows.</p>
+                </div>
+                <div class="step-tag">Hotový MP4 súbor</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 7. VRAM PROFIL -->
     <section id="vram-profil">
-        <h2><span class="section-num">5.</span> VRAM manažment a sekvenčné fázy</h2>
-        <p>Aplikácia je navrhnutá pre striktne <strong>sekvenčný beh</strong>, čo znamená, že v 12 GB pamäti karty <strong>AMD Radeon RX 7700 XT</strong> je vždy načítaný maximálne jeden neurónový model. Po dokončení fázy sa model uvoľní a nasleduje ďalší.</p>
+        <h2><span class="section-num">7</span> VRAM manažment a sekvenčné fázy</h2>
+        <p>Aplikácia využíva <strong>striktne sekvenčné načítanie AI modelov</strong>. Po každej fáze sa pamäť VRAM na vašej karte <strong>AMD Radeon RX 7700 XT (12 GB VRAM)</strong> kompletne vyčistí.</p>
 
         <table>
             <thead>
                 <tr>
                     <th>Fáza Pipeline</th>
-                    <th>Použitý AI Model / Engine</th>
-                    <th>VRAM Spotreba</th>
-                    <th>RAM Spotreba</th>
-                    <th>Hardvér</th>
+                    <th>Použitý AI Model</th>
+                    <th>Využitie VRAM</th>
+                    <th>Využitie RAM</th>
+                    <th>Výpočtová jednotka</th>
                 </tr>
             </thead>
             <tbody>
@@ -669,7 +699,7 @@
                 </tr>
                 <tr>
                     <td><strong>2. ASR Prepis</strong></td>
-                    <td>Whisper-SK (large-v3)</td>
+                    <td>Whisper-SK</td>
                     <td><strong>5 600 MB</strong></td>
                     <td>~4 200 MB</td>
                     <td>ROCm GPU</td>
@@ -683,14 +713,14 @@
                 </tr>
                 <tr>
                     <td><strong>4. Editor</strong></td>
-                    <td>React UI / Tauri State</td>
+                    <td>React UI / Tauri</td>
                     <td>0 MB</td>
                     <td>~256 MB</td>
-                    <td>Hostiteľ</td>
+                    <td>Hostiteľ (Windows)</td>
                 </tr>
                 <tr>
                     <td><strong>5. TTS Syntéza</strong></td>
-                    <td>Piper / Kokoro ONNX</td>
+                    <td>Piper / Kokoro</td>
                     <td>256 – 1 800 MB</td>
                     <td>~800 MB</td>
                     <td>CPU / GPU</td>
@@ -703,15 +733,15 @@
                     <td>ROCm GPU</td>
                 </tr>
                 <tr>
-                    <td><em>(6b. Fallback)</em></td>
-                    <td>MuseTalk (OOM Záchrana)</td>
+                    <td><em>(6b. Záchranný Fallback)</em></td>
+                    <td>MuseTalk</td>
                     <td><em>4 600 MB</em></td>
                     <td>~4 096 MB</td>
                     <td>ROCm GPU</td>
                 </tr>
                 <tr>
-                    <td><strong>7. Muxing</strong></td>
-                    <td>FFmpeg Audio Ducking</td>
+                    <td><strong>7. Finálny Muxing</strong></td>
+                    <td>FFmpeg Ducking</td>
                     <td>0 MB</td>
                     <td>~1 024 MB</td>
                     <td>CPU</td>
@@ -720,58 +750,32 @@
         </table>
     </section>
 
-    <!-- 6. LICENCIE -->
-    <section id="licencie">
-        <h2><span class="section-num">6.</span> Licencie a komerčná bezpečnosť modelov</h2>
-        <p>Pri komerčnom nasadení v produkcii je nevyhnutné dodržiavať licencie jednotlivých modelov:</p>
-
-        <div class="grid-2">
-            <div class="card">
-                <div class="card-title">
-                    <span>Piper TTS & Kokoro</span>
-                    <span class="badge badge-green">Komerčne Bezpečné</span>
-                </div>
-                <p><strong>Licencia:</strong> MIT / Apache 2.0</p>
-                <p>Plne povolené na komerčné využitie bez licenčných poplatkov. Ideálne pre produkčný dabing videí.</p>
-            </div>
-
-            <div class="card">
-                <div class="card-title">
-                    <span>Coqui XTTS-v2</span>
-                    <span class="badge badge-amber">Nekomerčné / Testovanie</span>
-                </div>
-                <p><strong>Licencia:</strong> CPML (Coqui Public Model License)</p>
-                <p>Určené výhradne na výskum, interné testovanie a nekomerčné účely. Pri voľbe v aplikácii sa zobrazuje upozornenie.</p>
-            </div>
-        </div>
-    </section>
-
-    <!-- 7. TROUBLESHOOTING -->
-    <section id="troubleshooting">
-        <h2><span class="section-num">7.</span> Riešenie problémov a časté otázky (FAQ)</h2>
+    <!-- 8. FAQ -->
+    <section id="faq">
+        <h2><span class="section-num">8</span> Časté otázky a riešenie problémov (FAQ)</h2>
 
         <div class="card">
             <div class="card-title">
-                <span>Čo ak LatentSync vypíše chybu "Out of Memory" (OOM)?</span>
-                <span class="badge badge-blue">Riešenie</span>
+                <span>Ako zistím, či AMD grafická karta správne funguje v Ubuntu?</span>
+                <span class="badge badge-blue">Diagnostika</span>
             </div>
-            <p>Aplikácia má zabudovaný <strong>inteligentný samoliečiaci mechanizmus</strong>. Ak LatentSync narazí na VRAM limit, orchestrátor automaticky zachytí OOM chybovú hlášku a bez prerušenia reštartuje fázu s odľahčeným modelom <strong>MuseTalk (~4.6 GB VRAM)</strong>. V nastaveniach tiež môžete znížiť rozlíšenie vstupného videa na 720p.</p>
+            <p>Otvorte terminál Ubuntu cez menu Štart a zadajte príkaz <code>rocminfo</code> alebo <code>python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"</code>. Mal by vypísať názov vašej karty (Radeon RX 7700 XT).</p>
         </div>
 
         <div class="card">
             <div class="card-title">
-                <span>Prečo je dôležitý "ROCm Native SDPA Fallback"?</span>
-                <span class="badge badge-blue">AMD ROCm Fix</span>
+                <span>Čo robiť, ak pri kompilácii chýba Visual Studio C++?</span>
+                <span class="badge badge-purple">MSVC</span>
             </div>
-            <p>Pôvodné repozitáre ako LatentSync využívajú knižnice <code>xFormers</code> alebo <code>FlashAttention</code>, ktoré sú kompilované primárne pre NVIDIA CUDA a na AMD ROCm architektúrach môžu zlyhať. Náš zabudovaný patch dynamicky nahrádza volania xFormers za natívne jadro <code>torch.nn.functional.scaled_dot_product_attention</code>, ktoré beží na karte RX 7700 XT na 100% rýchlosti.</p>
+            <p>Tauri vyžaduje kompilátor C++ od Microsoftu. Spustite v PowerShell (Správca): <code>winget install Microsoft.VisualStudio.2022.BuildTools</code> a pri inštalácii zakliknite <em>"Vývoj desktopových aplikácií v C++" (Desktop development with C++)</em>.</p>
         </div>
 
         <div class="card">
             <div class="card-title">
-                <span>Ako nájdem vygenerované súbory na disku vo Windows?</span>
-                <span class="badge badge-blue">UNC Cesty</span>
+                <span>Kde sa fyzicky na disku ukladajú spracované videá?</span>
+                <span class="badge badge-green">Priečinok</span>
             </div>
-            <p>Všetky súbory z WSL2 Linux prostredia sú priamo prístupné z Windows cez sieťovú UNC cestu: <code>\\wsl.localhost\Ubuntu-24.04\home\ubuntu\ai_dubbing_workspace\</code>. V GUI stačí kliknúť na tlačidlo <em>"Otvoriť v Prieskumníkovi"</em>.</p>
+            <p>Všetky súbory sa nachádzajú v sieťovom priečinku WSL: <code>\\wsl.localhost\Ubuntu-24.04\home\ubuntu\ai_dubbing_workspace\</code>. V Prieskumníkovi Windows stačí túto adresu skopírovať do horného riadku s cestou.</p>
         </div>
     </section>
 

@@ -6,6 +6,53 @@ $$\text{Slovenské Video} \longrightarrow \text{Whisper-SK ASR} \longrightarrow 
 
 ---
 
+## ⚡ Rýchly Štart na Windows 11
+
+### 1. Krok: Automatická inštalácia nástrojov (PowerShell ako Správca)
+Ak spúšťate projekt prvýkrát a nemáte ešte nainštalovaný Node.js (`npm`), Rust ani WSL2, otvorte **PowerShell ako Správca** (Run as Administrator) a spustite:
+
+```powershell
+cd C:\Dabovanie-vide-lok-lne-main
+powershell -ExecutionPolicy Bypass -File .\install_prerequisites.ps1
+```
+
+Tento skript automaticky overí a nainštaluje:
+- **Node.js 20+ (LTS)** a správcu balíčkov `npm`
+- **Rust toolchain** (`rustup`, `cargo`)
+- **Microsoft C++ Build Tools** (MSVC pre kompiláciu Tauri)
+- **WSL2 s Ubuntu 24.04** pre beh AI modelov
+
+---
+
+### 2. Krok: Spustenie aplikácie (Bežný používateľ)
+Po dokončení inštalácie otvorte **nové bežné okno PowerShellu** (alebo iba dvakrát kliknite na súbor `start_app.bat` v Prieskumníkovi Windows):
+
+```powershell
+cd C:\Dabovanie-vide-lok-lne-main
+
+# Nainštaluje frontendové balíčky (stačí vykonať iba raz)
+npm install
+
+# Spustí lokálny dev server a otvorí desktopové okno aplikácie
+npm run tauri dev
+```
+
+---
+
+## ❓ Prečo vznikali chyby pri prvom spúšťaní?
+
+1. **`npm : The term 'npm' is not recognized...`**
+   - **Dôvod:** Nástroj `npm` je súčasťou programu **Node.js**. Ak Node.js nie je na počítači nainštalovaný, Windows príkaz `npm` nepozná.
+   - **Riešenie:** Spustite `.\install_prerequisites.ps1` alebo nainštalujte Node.js z [nodejs.org](https://nodejs.org).
+
+2. **`rustup : The term 'rustup' is not recognized...`**
+   - **Dôvod:** Po inštalácii nového programu do Windows je potrebné zatvoriť a znovu otvoriť okno PowerShellu, aby sa načítali nové systémové cesty (`PATH`).
+
+3. **`The requested operation requires elevation.`**
+   - **Dôvod:** Príkaz `wsl --install` vyžaduje práva správcu (Spustiť ako správca / Run as Administrator).
+
+---
+
 ## 🎯 Hlavné Vlastnosti a Funkcionalita
 
 1. **Rust Orchestrátor (Tauri v2):**
@@ -47,30 +94,11 @@ $$\text{Slovenské Video} \longrightarrow \text{Whisper-SK ASR} \longrightarrow 
 
 ---
 
-## 🚀 Rýchly Štart
-
-### 1. Klonovanie a Inštalácia Závislostí
-```bash
-git clone https://github.com/stemja1/Dabovanie-vide-lok-lne.git
-cd Dabovanie-vide-lok-lne
-npm install
-```
-
-### 2. Spustenie Aplikácie vo Vývojovom Režime
-```bash
-npm run dev
-```
-
-### 3. Zostavenie Windows Inštalátora
-```bash
-cargo tauri build
-```
-
----
-
 ## 📁 Štruktúra Projektu
 
 ```
+├── install_prerequisites.ps1 # Automatický inštalátor Node.js, Rustu, MSVC a WSL2
+├── start_app.bat          # Spúšťač aplikácie jedným klikom
 ├── src-tauri/             # Rust backend (Tauri v2, WSL runner, orchestrátor, monitory)
 │   ├── src/
 │   │   ├── config/        # Správa TOML konfigurácie a perzistencia
@@ -92,6 +120,7 @@ cargo tauri build
 │   ├── stage_6_mux.py     # Finálny muxing a vpečenie titulkov (FFmpeg)
 │   └── rocm_attention_patch.py # PyTorch SDPA optimalizácia pre AMD ROCm
 ├── docs/                  # Podrobná dokumentácia v slovenčine
+│   ├── NAVOD_NA_POUZITIE.html # Vizuálny interaktívny manuál pre prehliadač
 │   ├── ARCHITECTURE.md    # Detailná systémová architektúra
 │   ├── SETUP_GUIDE_SK.md  # Návod na inštaláciu krok za krokom
 │   ├── ROCM_FALLBACK.md   # Sprievodca ROCm SDPA a OOM fallbackom
@@ -109,7 +138,7 @@ cd src-tauri
 cargo test
 ```
 
-Všetky testy (overenie konfigurácie, preklad UNC ciest, parsovanie utterance metadát, VRAM budgeting a detekcia OOM chýb) sa vykonajú a overia integritu systému.
+Všetkých 23 testov (overenie konfigurácie, preklad UNC ciest, parsovanie utterance metadát, VRAM budgeting a detekcia OOM chýb) sa vykonajú a overia integritu systému.
 
 ---
 
