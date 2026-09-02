@@ -488,6 +488,19 @@
             <p><strong>Prečo nastala:</strong> Príkaz <code>wsl --install</code> zapína systémové virtualizačné komponenty vo Windows 11, čo z bezpečnostných dôvodov vyžaduje práva administrátora.</p>
             <p><strong>Riešenie:</strong> PowerShell je potrebné otvoriť cez <strong>"Spustiť ako správca" (Run as Administrator)</strong>.</p>
         </div>
+
+        <div class="error-card">
+            <h4>🛡️ Čo ak Windows blokuje spúšťanie skriptov? (ExecutionPolicy)</h4>
+            <p><strong>Hláška:</strong> <code>File ... cannot be loaded because running scripts is disabled on this system.</code></p>
+            <p><strong>Prečo nastala:</strong> Systém Windows má z bezpečnostných dôvodov predvolene zablokované spúšťanie <code>.ps1</code> skriptov.</p>
+            <p><strong>4 Jednoduché riešenia:</strong></p>
+            <ul>
+                <li><strong>Riešenie 1 (Odporúčané):</strong> V okne PowerShellu zadajte:<br><code>Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass</code> a stlačte Enter (povolí skripty iba pre aktuálne otvorené okno).</li>
+                <li><strong>Riešenie 2:</strong> Spustite skript priamo s prepínačom:<br><code>powershell -ExecutionPolicy Bypass -File .\install_prerequisites.ps1</code></li>
+                <li><strong>Riešenie 3:</strong> Použite dávkový súbor <code>start_app.bat</code> (dávkové súbory <code>.bat</code> Windows neblokuje).</li>
+                <li><strong>Riešenie 4:</strong> Odblokujte súbor príkazom: <code>Unblock-File .\install_prerequisites.ps1</code></li>
+            </ul>
+        </div>
     </section>
 
     <!-- 2. RYCHLA INSTALACIA -->
@@ -565,34 +578,52 @@
 
     <!-- 4. SPUSTENIE APLIKACIE -->
     <section id="spustenie-aplikacie">
-        <h2><span class="section-num">4</span> Ako spustiť aplikáciu</h2>
+        <h2><span class="section-num">4</span> Spustenie a kompilácia aplikácie</h2>
         <p>Po dokončení inštalácie prerekvizít <strong>zatvorte všetky staré okná PowerShellu</strong> a otvorte nový terminál (už nie je potrebný správca).</p>
+
+        <div class="callout callout-info">
+            <h4>💡 Potrebujem aplikáciu najprv skompilovať?</h4>
+            <p><strong>Nie je potrebná žiadna manuálna kompilácia vopred!</strong> Keď spustíte príkaz <code>npm run tauri dev</code> (alebo dvakrát kliknete na <code>start_app.bat</code>), Tauri si <strong>automaticky v pozadí spustí Rust kompilátor (Cargo)</strong>, skompiluje backend, zapne Vite server a otvorí desktopové okno s okamžitým náhľadom.</p>
+        </div>
 
         <div class="grid-2">
             <div class="card">
                 <div class="card-title">
-                    <span>Možnosť 1: Dvojklik na <code>start_app.bat</code></span>
-                    <span class="badge badge-green">Pohodlné</span>
+                    <span>Režim 1: Dvojklik na <code>start_app.bat</code></span>
+                    <span class="badge badge-green">Najrýchlejšie</span>
                 </div>
                 <p>V Prieskumníkovi Windows otvorte priečinok <code>C:\Dabovanie-vide-lok-lne-main</code> a dvakrát kliknite na súbor <strong><code>start_app.bat</code></strong>.</p>
-                <p>Súbor automaticky skontroluje prostredie, stiahne knižnice a spustí okno aplikácie.</p>
+                <p>Súbor automaticky skontroluje prostredie, stiahne knižnice, skompiluje Rust jadro a spustí okno aplikácie.</p>
             </div>
 
             <div class="card">
                 <div class="card-title">
-                    <span>Možnosť 2: Cez bežný PowerShell</span>
-                    <span class="badge badge-blue">Vývojársky režim</span>
+                    <span>Režim 2: Vývojársky režim cez PowerShell</span>
+                    <span class="badge badge-blue">Dev Mode</span>
                 </div>
-                <p>V novom okne PowerShellu zadajte:</p>
+                <p>V bežnom okne PowerShellu zadajte:</p>
                 <pre><code><span class="cmd-comment"># 1. Prejdite do projektu:</span>
 <span class="cmd-kw">cd</span> C:\Dabovanie-vide-lok-lne-main
 
 <span class="cmd-comment"># 2. Nainštalujte frontend balíčky (stačí vykonať iba raz):</span>
 <span class="cmd-kw">npm</span> install
 
-<span class="cmd-comment"># 3. Spustite aplikáciu:</span>
+<span class="cmd-comment"># 3. Spustite aplikáciu (automaticky skompiluje a otvorí okno):</span>
 <span class="cmd-kw">npm</span> run tauri dev</code></pre>
             </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <span>Režim 3: Zostavenie samostatného inštalátora (.exe / .msi)</span>
+                <span class="badge badge-purple">Release</span>
+            </div>
+            <p>Ak chcete vytvoriť samostatný, hotový inštalačný súbor, ktorý funguje bez nutnosti mať zapnutý PowerShell alebo vývojárske prostredie:</p>
+            <pre><code><span class="cmd-comment"># Vytvorí hotový Windows inštalátor:</span>
+<span class="cmd-kw">npm</span> run tauri build
+
+<span class="cmd-comment"># Výsledný súbor nájdete v:</span>
+<span class="cmd-str">src-tauri/target/release/bundle/msi/AI Dabing Studio_0.1.0_x64_en-US.msi</span></code></pre>
         </div>
 
         <div class="callout callout-success">

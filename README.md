@@ -39,17 +39,33 @@ npm run tauri dev
 
 ---
 
-## ❓ Prečo vznikali chyby pri prvom spúšťaní?
+## ❓ Riešenie častých situácií pri prvom spúšťaní
 
-1. **`npm : The term 'npm' is not recognized...`**
+1. **Blokovanie skriptov v PowerShell (`ExecutionPolicy`):**
+   - **Chyba:** `File ... cannot be loaded because running scripts is disabled on this system.`
+   - **Riešenie:** V PowerShell zadajte príkaz:
+     ```powershell
+     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+     ```
+     Alebo spustite skript s bypassom: `powershell -ExecutionPolicy Bypass -File .\install_prerequisites.ps1`
+     Alebo použite `start_app.bat` (dávkové súbory `.bat` systém nikdy neblokuje).
+
+2. **`npm : The term 'npm' is not recognized...`**
    - **Dôvod:** Nástroj `npm` je súčasťou programu **Node.js**. Ak Node.js nie je na počítači nainštalovaný, Windows príkaz `npm` nepozná.
    - **Riešenie:** Spustite `.\install_prerequisites.ps1` alebo nainštalujte Node.js z [nodejs.org](https://nodejs.org).
 
-2. **`rustup : The term 'rustup' is not recognized...`**
+3. **`rustup : The term 'rustup' is not recognized...`**
    - **Dôvod:** Po inštalácii nového programu do Windows je potrebné zatvoriť a znovu otvoriť okno PowerShellu, aby sa načítali nové systémové cesty (`PATH`).
 
-3. **`The requested operation requires elevation.`**
+4. **`The requested operation requires elevation.`**
    - **Dôvod:** Príkaz `wsl --install` vyžaduje práva správcu (Spustiť ako správca / Run as Administrator).
+
+---
+
+## ⚙️ Potrebujem aplikáciu najprv skompilovať?
+
+- **Pre okamžitý beh / testovanie:** Nie! Príkaz `npm run tauri dev` (alebo dvojklik na `start_app.bat`) **automaticky skompiluje Rust backend na pozadí**, spustí Vite a otvorí okno aplikácie.
+- **Pre vytvorenie samostatného inštalátora (.msi / .exe):** Spustite `npm run tauri build`. Hotový inštalačný balíček nájdete v `src-tauri/target/release/bundle/msi/`.
 
 ---
 
