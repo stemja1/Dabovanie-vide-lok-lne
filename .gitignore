@@ -26,3 +26,4 @@ workspace/
 *.onnx
 *.pt
 *.bin
+__pycache__/

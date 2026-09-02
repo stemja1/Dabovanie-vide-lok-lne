@@ -95,7 +95,7 @@ def run_asr(input_video: str, workspace: str, engine: str, device_type: str, mod
                         "chinese_text": "",
                         "target_audio_file": f"audio_segments/utt_{utt_idx:03d}.wav",
                         "speed_factor": 1.0,
-                        "is_edited": false,
+                        "is_edited": False,
                         "confidence": 0.98,
                         "words": current_utt_words
                     })
@@ -117,7 +117,7 @@ def run_asr(input_video: str, workspace: str, engine: str, device_type: str, mod
                     "chinese_text": "",
                     "target_audio_file": f"audio_segments/utt_{utt_idx:03d}.wav",
                     "speed_factor": 1.0,
-                    "is_edited": false,
+                    "is_edited": False,
                     "confidence": 0.97,
                     "words": current_utt_words
                 })

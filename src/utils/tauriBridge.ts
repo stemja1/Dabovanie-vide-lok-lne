@@ -130,12 +130,40 @@ type EventCallback = (payload: any) => void;
 const listeners: { [event: string]: EventCallback[] } = {};
 
 export function addTauriListener(event: string, callback: EventCallback): () => void {
+  let tauriUnlisten: (() => void) | null = null;
+  let isCancelled = false;
+
+  if (isTauriEnvironment()) {
+    import('@tauri-apps/api/event')
+      .then(({ listen }) => {
+        if (isCancelled) return;
+        return listen(event, (e: { payload: any }) => {
+          callback(e.payload);
+        });
+      })
+      .then((unlistenFn) => {
+        if (!unlistenFn) return;
+        if (isCancelled) {
+          unlistenFn();
+        } else {
+          tauriUnlisten = unlistenFn;
+        }
+      })
+      .catch((err) => {
+        console.warn(`[Tauri Event Listen Error on ${event}]`, err);
+      });
+  }
+
   if (!listeners[event]) {
     listeners[event] = [];
   }
   listeners[event].push(callback);
   return () => {
-    listeners[event] = listeners[event].filter(cb => cb !== callback);
+    isCancelled = true;
+    if (tauriUnlisten) {
+      tauriUnlisten();
+    }
+    listeners[event] = (listeners[event] || []).filter(cb => cb !== callback);
   };
 }
 
