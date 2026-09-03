@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   Copy,
   Check,
+  RotateCcw,
 } from 'lucide-react';
 import { SystemDiagnosticsReport, ModelManifestItem } from '../../types/wizard';
 import { ProcessLogLine } from '../../types/pipeline';
@@ -36,13 +37,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   // Automated installer run state
   const [isRunningAll, setIsRunningAll] = useState<boolean>(false);
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
+  const [failedStepIndex, setFailedStepIndex] = useState<number | null>(null);
   const [installerLogs, setInstallerLogs] = useState<ProcessLogLine[]>([]);
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
 
   const wizardSteps = [
     { id: 'wsl_install', title: '1. Inštalácia WSL2 & Ubuntu-24.04', desc: 'Overenie subsystému a inicializácia distribúcie' },
-    { id: 'system_packages', title: '2. Systémové balíky Ubuntu', desc: 'ffmpeg, git, python3-venv, build-essential' },
+    { id: 'system_packages', title: '2. Systémové balíky Ubuntu', desc: 'ffmpeg, git, python3-venv, build-essential (ako root)' },
     { id: 'python_rocm', title: '3. Python Venv & PyTorch ROCm 6.2/6.4', desc: 'Virtuálne prostredie s AMD ROCm GPU podporou' },
     { id: 'lipsync_repos', title: '4. AI Repozitáre (LatentSync 1.5 & MuseTalk)', desc: 'Klonovanie a inštalácia závislostí modelov' },
     { id: 'model_whisper-large-v3-sk', title: '5. Whisper Large-v3 SK Model', desc: 'Slovenský ASR checkpoint' },
@@ -78,12 +80,15 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
     return () => unsubscribe();
   }, []);
 
-  const handleRunAllSteps = async () => {
+  const handleRunAllSteps = async (startFromIndex: number = 0) => {
     setIsRunningAll(true);
+    setFailedStepIndex(null);
     setActiveTab('wizard_run');
-    setInstallerLogs([]);
+    if (startFromIndex === 0) {
+      setInstallerLogs([]);
+    }
 
-    for (let i = 0; i < wizardSteps.length; i++) {
+    for (let i = startFromIndex; i < wizardSteps.length; i++) {
       setCurrentStepIndex(i);
       const step = wizardSteps[i];
       try {
@@ -91,7 +96,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
           ...prev,
           {
             stream: 'system',
-            message: `>>> Spúšťam krok ${i + 1}/${wizardSteps.length}: ${step.title}...`,
+            message: `>>> [${new Date().toLocaleTimeString()}] Spúšťam krok ${i + 1}/${wizardSteps.length}: ${step.title}...`,
             timestamp_ms: Date.now(),
             is_progress: false,
             progress_percent: null,
@@ -99,14 +104,30 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
           },
         ]);
 
-        await invokeCommand('run_wizard_step', { step_id: step.id });
-      } catch (err) {
+        const res = await invokeCommand<boolean>('run_wizard_step', { step_id: step.id });
+        if (!res) {
+          throw new Error(`Krok '${step.title}' vrátil neúspešný stav.`);
+        }
+
+        setInstallerLogs((prev) => [
+          ...prev,
+          {
+            stream: 'system',
+            message: `✓ Krok ${i + 1}/${wizardSteps.length}: ${step.title} bol ÚSPEŠNE DOKONČENÝ.`,
+            timestamp_ms: Date.now(),
+            is_progress: false,
+            progress_percent: 100,
+            step_tag: step.id,
+          },
+        ]);
+      } catch (err: any) {
         console.error(`Step ${step.id} failed`, err);
+        setFailedStepIndex(i);
         setInstallerLogs((prev) => [
           ...prev,
           {
             stream: 'stderr',
-            message: `CHYBA v kroku ${step.title}: ${err}`,
+            message: `❌ CHYBA v kroku "${step.title}": ${err?.message || err}`,
             timestamp_ms: Date.now(),
             is_progress: false,
             progress_percent: null,
@@ -125,6 +146,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
     setActiveTab('wizard_run');
     setInstallerLogs([]);
     setIsRunningAll(true);
+    setFailedStepIndex(null);
 
     try {
       const stepId = itemId.startsWith('model_')
@@ -205,7 +227,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
               variant="primary"
               size="sm"
               leftIcon={<Play className="w-3.5 h-3.5" />}
-              onClick={handleRunAllSteps}
+              onClick={() => handleRunAllSteps(0)}
             >
               Automaticky nainštalovať všetko
             </Button>
@@ -284,15 +306,29 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
                 <h4 className="font-semibold text-sm text-slate-200">
                   {isRunningAll
                     ? `Vykonávam krok ${currentStepIndex + 1}/${wizardSteps.length}: ${wizardSteps[currentStepIndex]?.title}`
+                    : failedStepIndex !== null
+                    ? `Inštalácia sa zastavila na kroku ${failedStepIndex + 1}: ${wizardSteps[failedStepIndex]?.title}`
                     : 'Inštalácia pripravená'}
                 </h4>
                 <p className="text-xs text-slate-400 mt-0.5">
                   {wizardSteps[currentStepIndex]?.desc || 'Vyberte akciu alebo spustite celú inštaláciu.'}
                 </p>
               </div>
-              <Badge variant={isRunningAll ? 'primary' : 'secondary'}>
-                {isRunningAll ? 'Inštaluje sa...' : 'Neaktívne'}
-              </Badge>
+              <div className="flex items-center gap-2">
+                {failedStepIndex !== null && !isRunningAll && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    leftIcon={<RotateCcw className="w-3.5 h-3.5 text-amber-400" />}
+                    onClick={() => handleRunAllSteps(failedStepIndex)}
+                  >
+                    Opakovať od kroku {failedStepIndex + 1}
+                  </Button>
+                )}
+                <Badge variant={isRunningAll ? 'primary' : failedStepIndex !== null ? 'danger' : 'secondary'}>
+                  {isRunningAll ? 'Inštaluje sa...' : failedStepIndex !== null ? 'Zlyhané' : 'Neaktívne'}
+                </Badge>
+              </div>
             </div>
 
             <ProgressBar
@@ -319,7 +355,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
             <div className="p-4 h-80 overflow-y-auto font-mono text-xs text-slate-300 space-y-1 custom-scrollbar">
               {installerLogs.length === 0 ? (
                 <div className="text-slate-600 text-center py-16">
-                  Žiadne logy. Spustite inštalačný proces.
+                  Žiadne logy. Kliknite na "Automaticky nainštalovať všetko" alebo vyberte komponent na inštaláciu.
                 </div>
               ) : (
                 installerLogs.map((log, idx) => (

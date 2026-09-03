@@ -8,6 +8,11 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessLogLine {
     pub stream: String, // "stdout" | "stderr" | "system"
@@ -46,17 +51,37 @@ pub enum ProcessErrorKind {
 pub struct WslExecutor;
 
 impl WslExecutor {
-    /// Builds a Command to execute bash inside the target WSL distro (or native on Linux/macOS).
+    /// Builds a Command to execute bash inside the target WSL distro without spawning console windows.
     pub fn build_command(distro: &str, bash_command: &str) -> Command {
+        Self::build_command_with_user(distro, None, bash_command)
+    }
+
+    /// Builds a Command to execute bash as root inside target WSL distro.
+    pub fn build_command_as_root(distro: &str, bash_command: &str) -> Command {
+        Self::build_command_with_user(distro, Some("root"), bash_command)
+    }
+
+    /// Builds a Command with optional specified user (e.g. "root" or default).
+    pub fn build_command_with_user(
+        distro: &str,
+        user: Option<&str>,
+        bash_command: &str,
+    ) -> Command {
         #[cfg(target_os = "windows")]
         {
             let mut cmd = Command::new("wsl.exe");
-            cmd.args(["-d", distro, "--", "bash", "-c", bash_command]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            if let Some(u) = user {
+                cmd.args(["-d", distro, "-u", u, "--", "bash", "-c", bash_command]);
+            } else {
+                cmd.args(["-d", distro, "--", "bash", "-c", bash_command]);
+            }
             cmd
         }
         #[cfg(not(target_os = "windows"))]
         {
             let _ = distro;
+            let _ = user;
             let mut cmd = Command::new("bash");
             cmd.args(["-c", bash_command]);
             cmd
@@ -78,7 +103,7 @@ impl WslExecutor {
         Ok(out)
     }
 
-    /// Runs a command with real-time streaming of stdout/stderr, cancellation support, and timeout.
+    /// Runs a streaming command as default user
     pub async fn run_streaming_command(
         distro: &str,
         bash_command: &str,
@@ -86,7 +111,46 @@ impl WslExecutor {
         timeout_duration: Option<Duration>,
         cancel_flag: Option<Arc<AtomicBool>>,
     ) -> Result<ProcessExecutionResult> {
-        let mut cmd = Self::build_command(distro, bash_command);
+        Self::run_streaming_command_internal(
+            distro,
+            None,
+            bash_command,
+            log_sender,
+            timeout_duration,
+            cancel_flag,
+        )
+        .await
+    }
+
+    /// Runs a streaming command as root (e.g. for apt-get install)
+    pub async fn run_streaming_command_as_root(
+        distro: &str,
+        bash_command: &str,
+        log_sender: Option<mpsc::UnboundedSender<ProcessLogLine>>,
+        timeout_duration: Option<Duration>,
+        cancel_flag: Option<Arc<AtomicBool>>,
+    ) -> Result<ProcessExecutionResult> {
+        Self::run_streaming_command_internal(
+            distro,
+            Some("root"),
+            bash_command,
+            log_sender,
+            timeout_duration,
+            cancel_flag,
+        )
+        .await
+    }
+
+    /// Internal implementation for streaming process runner
+    async fn run_streaming_command_internal(
+        distro: &str,
+        user: Option<&str>,
+        bash_command: &str,
+        log_sender: Option<mpsc::UnboundedSender<ProcessLogLine>>,
+        timeout_duration: Option<Duration>,
+        cancel_flag: Option<Arc<AtomicBool>>,
+    ) -> Result<ProcessExecutionResult> {
+        let mut cmd = Self::build_command_with_user(distro, user, bash_command);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 

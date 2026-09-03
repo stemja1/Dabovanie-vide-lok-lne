@@ -131,7 +131,7 @@ dpkg -l | grep -q libsndfile1 && echo "SNDFILE_OK" || echo "SNDFILE_MISSING";
             } else {
                 None
             },
-            fix_hint: Some("Spustite 'sudo apt update && sudo apt install -y ffmpeg'.".to_string()),
+            fix_hint: Some("Spustite inštaláciu systémových balíkov cez tlačidlo 'Nainštalovať'.".to_string()),
         });
 
         items.push(DependencyCheckItem {
@@ -152,7 +152,7 @@ dpkg -l | grep -q libsndfile1 && echo "SNDFILE_OK" || echo "SNDFILE_MISSING";
             } else {
                 None
             },
-            fix_hint: Some("Spustite 'sudo apt install -y git'.".to_string()),
+            fix_hint: Some("Spustite inštaláciu systémových balíkov cez tlačidlo 'Nainštalovať'.".to_string()),
         });
 
         items.push(DependencyCheckItem {
@@ -173,14 +173,14 @@ dpkg -l | grep -q libsndfile1 && echo "SNDFILE_OK" || echo "SNDFILE_MISSING";
                 None
             },
             fix_hint: Some(
-                "Spustite 'sudo apt install -y python3-pip python3-venv libsndfile1'.".to_string(),
+                "Spustite inštaláciu systémových balíkov cez tlačidlo 'Nainštalovať'.".to_string(),
             ),
         });
 
         // 3. Check Python venv and PyTorch ROCm
-        let python_bin = format!("{}/bin/python", venv_path.trim_end_matches('/'));
+        let venv_clean = venv_path.trim_end_matches('/');
         let check_py_cmd = format!(
-            r#"test -f {0} && {0} -c "
+            r#"VENV="{0}"; VENV="${{VENV/#\~/$HOME}}"; test -f "$VENV/bin/python" && "$VENV/bin/python" -c "
 import sys
 try:
     import torch
@@ -195,7 +195,7 @@ try:
 except Exception as e:
     print('PACKAGES_MISSING:' + str(e))
 " || echo "VENV_NOT_FOUND""#,
-            python_bin
+            venv_clean
         );
 
         let py_res = WslExecutor::run_command_output(distro, &check_py_cmd).await;
@@ -240,7 +240,7 @@ except Exception as e:
             version_detected: if torch_ok { Some("PyTorch ROCm".to_string()) } else { None },
             is_critical: true,
             error_message: if !torch_rocm_ok { Some("PyTorch nemá detegovanú ROCm / GPU akceleráciu.".to_string()) } else { None },
-            fix_hint: Some("Inštalujte PyTorch cez ROCm index: pip install torch --index-url https://download.pytorch.org/whl/rocm6.2".to_string()),
+            fix_hint: Some("Inštalujte PyTorch cez ROCm index v Setup Wizarde.".to_string()),
         });
 
         items.push(DependencyCheckItem {
@@ -264,10 +264,10 @@ except Exception as e:
         });
 
         // 4. Check Repositories (LatentSync 1.5 and MuseTalk)
+        let ws_clean = workspace_dir.trim_end_matches('/');
         let check_repos_cmd = format!(
-            r#"test -d {0}/latentsync && echo "LATENTSYNC_OK" || echo "LATENTSYNC_MISSING";
-test -d {0}/musetalk && echo "MUSETALK_OK" || echo "MUSETALK_MISSING";"#,
-            workspace_dir
+            r#"WORKSPACE="{0}"; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; test -d "$WORKSPACE/latentsync" && echo "LATENTSYNC_OK" || echo "LATENTSYNC_MISSING"; test -d "$WORKSPACE/musetalk" && echo "MUSETALK_OK" || echo "MUSETALK_MISSING";"#,
+            ws_clean
         );
         let repo_res = WslExecutor::run_command_output(distro, &check_repos_cmd).await;
         let repo_stdout = repo_res
@@ -325,8 +325,8 @@ test -d {0}/musetalk && echo "MUSETALK_OK" || echo "MUSETALK_MISSING";"#,
         let all_models = ModelsManifest::get_all_models();
         for model in all_models {
             let check_model_cmd = format!(
-                "test -e \"{0}/{1}\" && echo 'MODEL_OK' || echo 'MODEL_MISSING'",
-                workspace_dir, model.local_relative_path
+                r#"WORKSPACE="{0}"; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; test -e "$WORKSPACE/{1}" && echo 'MODEL_OK' || echo 'MODEL_MISSING'"#,
+                ws_clean, model.local_relative_path
             );
             let m_res = WslExecutor::run_command_output(distro, &check_model_cmd).await;
             let m_ok = m_res

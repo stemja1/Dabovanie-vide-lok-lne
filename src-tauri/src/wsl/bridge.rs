@@ -1,6 +1,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
 use std::process::Stdio;
 #[cfg(target_os = "windows")]
 use tokio::process::Command;
@@ -36,18 +38,19 @@ pub struct RocmStatusInfo {
 pub struct WslBridge;
 
 impl WslBridge {
-    /// Detects WSL status, installed distributions and versions on Windows.
+    /// Detects WSL status, installed distributions and versions on Windows without console popup.
     pub async fn detect_wsl_status(target_distro: &str) -> Result<WslStatusInfo> {
         #[cfg(target_os = "windows")]
         {
             let mut cmd = Command::new("wsl.exe");
+            cmd.creation_flags(0x08000000);
             cmd.args(["-l", "-v"]);
             cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
 
             let output = match cmd.output().await {
                 Ok(out) => out,
-                Err(e) => {
+                Err(_) => {
                     return Ok(WslStatusInfo {
                         is_wsl_installed: false,
                         is_default_version_2: false,
@@ -108,29 +111,28 @@ impl WslBridge {
 
     /// Checks ROCm and PyTorch HIP status inside the target WSL distro.
     pub async fn check_rocm_status(distro: &str, venv_path: &str) -> Result<RocmStatusInfo> {
-        let python_bin = format!("{}/bin/python", venv_path.trim_end_matches('/'));
-        let test_script = r#"
+        let venv_clean = venv_path.trim_end_matches('/');
+        let test_script = format!(
+            r#"VENV="{0}"; VENV="${{VENV/#\~/$HOME}}"; test -f "$VENV/bin/python" && "$VENV/bin/python" -c "
 import sys, json
-info = {"rocm_available": False, "rocm_version": None, "gpu_name": None, "total_vram_mb": 0, "free_vram_mb": 0, "hip": False}
+info = {{'rocm_available': False, 'rocm_version': None, 'gpu_name': None, 'total_vram_mb': 0, 'free_vram_mb': 0, 'hip': False}}
 try:
     import torch
-    info["hip"] = hasattr(torch.version, 'hip') and torch.version.hip is not None
-    info["rocm_available"] = torch.cuda.is_available()
-    if info["rocm_available"]:
-        info["gpu_name"] = torch.cuda.get_device_name(0)
+    info['hip'] = hasattr(torch.version, 'hip') and torch.version.hip is not None
+    info['rocm_available'] = torch.cuda.is_available()
+    if info['rocm_available']:
+        info['gpu_name'] = torch.cuda.get_device_name(0)
         total = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
-        info["total_vram_mb"] = int(total)
-        info["rocm_version"] = getattr(torch.version, 'hip', 'ROCm 6.4')
+        info['total_vram_mb'] = int(total)
+        info['rocm_version'] = getattr(torch.version, 'hip', 'ROCm 6.4')
 except Exception as e:
-    info["error"] = str(e)
+    info['error'] = str(e)
 print(json.dumps(info))
-"#;
+" || echo '{{"rocm_available": false}}'"#,
+            venv_clean
+        );
 
-        let res = crate::wsl::executor::WslExecutor::run_command_output(
-            distro,
-            &format!("{} -c '{}'", python_bin, test_script.replace('\n', " ")),
-        )
-        .await;
+        let res = crate::wsl::executor::WslExecutor::run_command_output(distro, &test_script).await;
 
         match res {
             Ok(output) if output.status.success() => {

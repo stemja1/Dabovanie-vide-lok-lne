@@ -53,15 +53,15 @@ pub async fn run_wizard_step(
         }
     });
 
-    match step_id.as_str() {
+    let success = match step_id.as_str() {
         "wsl_install" => installer
             .install_wsl2_ubuntu(&cfg.wsl_distro, Some(tx))
             .await
-            .map_err(|e| e.to_string()),
+            .map_err(|e| e.to_string())?,
         "system_packages" => installer
             .install_system_packages(&cfg.wsl_distro, Some(tx))
             .await
-            .map_err(|e| e.to_string()),
+            .map_err(|e| e.to_string())?,
         "python_rocm" => installer
             .setup_python_venv_and_rocm(
                 &cfg.wsl_distro,
@@ -70,7 +70,7 @@ pub async fn run_wizard_step(
                 Some(tx),
             )
             .await
-            .map_err(|e| e.to_string()),
+            .map_err(|e| e.to_string())?,
         "lipsync_repos" => installer
             .setup_lipsync_repos(
                 &cfg.wsl_distro,
@@ -79,7 +79,7 @@ pub async fn run_wizard_step(
                 Some(tx),
             )
             .await
-            .map_err(|e| e.to_string()),
+            .map_err(|e| e.to_string())?,
         _ if step_id.starts_with("model_") => {
             let model_id = step_id.trim_start_matches("model_");
             installer
@@ -91,10 +91,19 @@ pub async fn run_wizard_step(
                     Some(tx),
                 )
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string())?
         }
-        _ => Err(format!("Neznámy inštalačný krok: {}", step_id)),
+        _ => return Err(format!("Neznámy inštalačný krok: {}", step_id)),
+    };
+
+    if !success {
+        return Err(format!(
+            "Inštalačný krok '{}' zlyhal. Skontrolujte chybové hlásenie v logu.",
+            step_id
+        ));
     }
+
+    Ok(true)
 }
 
 #[tauri::command]

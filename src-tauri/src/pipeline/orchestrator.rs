@@ -72,11 +72,13 @@ impl PipelineOrchestrator {
         let ws = workspace_dir.trim_end_matches('/');
         let cmd = format!(
             r#"
-mkdir -p "{0}/scripts"
-if [ ! -f "{0}/scripts/stage_1_demux.py" ]; then
+WORKSPACE="{0}"
+WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
+mkdir -p "$WORKSPACE/scripts"
+if [ ! -f "$WORKSPACE/scripts/stage_1_demux.py" ]; then
     for cand in /mnt/c/Dabovanie-vide-lok-lne-main/scripts /mnt/c/*/Dabovanie-vide-lok-lne*/scripts /mnt/c/*/*/scripts; do
         if [ -d "$cand" ] && [ -f "$cand/stage_1_demux.py" ]; then
-            cp -ru "$cand"/*.py "{0}/scripts/" 2>/dev/null || true
+            cp -ru "$cand"/*.py "$WORKSPACE/scripts/" 2>/dev/null || true
             break
         fi
     done
@@ -271,6 +273,9 @@ fi
             if self.is_cancelled.load(Ordering::SeqCst) {
                 let mut st = self.state.lock().await;
                 st.is_running = false;
+                if let Some(s) = st.stages.get_mut(idx) {
+                    s.status = StageStatus::Skipped;
+                }
                 return Ok(());
             }
 
@@ -291,7 +296,7 @@ fi
         if let Some(ref tx) = log_tx {
             let _ = tx.send(ProcessLogLine {
                 stream: "system".to_string(),
-                message: "=== VŠETKY FÁZY BOLI ÚSPEŠNE DOKONČENÉ ===".to_string(),
+                message: "=== AI DABINGOVÝ PIPELINE ÚSPEŠNE DOKONČENÝ! ===".to_string(),
                 timestamp_ms: chrono::Utc::now().timestamp_millis(),
                 is_progress: false,
                 progress_percent: Some(100.0),
@@ -302,30 +307,31 @@ fi
         Ok(())
     }
 
-    /// Runs one single stage and updates state & handles OOM fallback
+    /// Runs a single pipeline stage
     pub async fn run_single_stage(
         &self,
         stage_index: usize,
         config: &AppConfig,
         log_tx: Option<mpsc::UnboundedSender<ProcessLogLine>>,
     ) -> Result<()> {
-        let (stage_id, input_wsl, output_wsl, meta_wsl) = {
+        let (stage_id, _stage_name) = {
             let mut st = self.state.lock().await;
-            if stage_index >= st.stages.len() {
-                return Err(anyhow::anyhow!(
-                    "Index fázy {} je mimo rozsahu (0..{})",
-                    stage_index,
-                    st.stages.len()
-                ));
-            }
             st.current_stage_index = stage_index;
-            let s = &mut st.stages[stage_index];
-            s.status = StageStatus::Running;
-            s.started_at_ms = Some(chrono::Utc::now().timestamp_millis());
-            s.progress_percent = 5.0;
-            s.error_message = None;
+            if let Some(s) = st.stages.get_mut(stage_index) {
+                s.status = StageStatus::Running;
+                s.progress_percent = 0.0;
+                s.started_at_ms = Some(chrono::Utc::now().timestamp_millis());
+                s.completed_at_ms = None;
+                s.error_message = None;
+                (s.id, s.name.clone())
+            } else {
+                return Err(anyhow::anyhow!("Index fázy {} mimo rozsahu", stage_index));
+            }
+        };
+
+        let (input_wsl, output_wsl, meta_wsl) = {
+            let st = self.state.lock().await;
             (
-                s.id,
                 st.input_video_path_wsl.clone(),
                 st.output_video_path_wsl.clone().unwrap_or_default(),
                 st.metadata_json_path_wsl.clone().unwrap_or_default(),
@@ -338,7 +344,7 @@ fi
             return Ok(());
         }
 
-        // Build CLI command with strict POSIX shell escaping for security
+        // Build CLI command with strict POSIX shell escaping for security and $HOME resolution
         let cmd = self.build_stage_command(stage_id, &input_wsl, &output_wsl, &meta_wsl, config);
 
         let res = WslExecutor::run_streaming_command(
@@ -449,25 +455,26 @@ fi
         meta_wsl: &str,
         config: &AppConfig,
     ) -> String {
-        let python_bin = PathMapper::escape_bash_arg(&format!(
-            "{}/bin/python",
-            config.venv_path.trim_end_matches('/')
-        ));
-        let script_dir = format!("{}/scripts", config.workspace_dir.trim_end_matches('/'));
+        let venv_normalized = config.venv_path.trim_end_matches('/');
+        let ws_normalized = config.workspace_dir.trim_end_matches('/');
 
         let q_in = PathMapper::escape_bash_arg(input_wsl);
         let q_out = PathMapper::escape_bash_arg(output_wsl);
         let q_meta = PathMapper::escape_bash_arg(meta_wsl);
-        let q_ws = PathMapper::escape_bash_arg(&config.workspace_dir);
+
+        let setup_env = format!(
+            r#"VENV="{0}"; WORKSPACE="{1}"; VENV="${{VENV/#\~/$HOME}}"; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; PYTHON_BIN="$VENV/bin/python"; SCRIPT_DIR="$WORKSPACE/scripts"; "#,
+            venv_normalized, ws_normalized
+        );
 
         match stage_id {
             PipelineStageId::Demux => format!(
-                "{} {}/stage_1_demux.py --input {} --workspace {}",
-                python_bin, script_dir, q_in, q_ws
+                "{}$PYTHON_BIN $SCRIPT_DIR/stage_1_demux.py --input {} --workspace \"$WORKSPACE\"",
+                setup_env, q_in
             ),
             PipelineStageId::Asr => format!(
-                "{} {}/stage_2_asr.py --input {} --workspace {} --engine {} --device {} --model {}",
-                python_bin, script_dir, q_in, q_ws,
+                "{}$PYTHON_BIN $SCRIPT_DIR/stage_2_asr.py --input {} --workspace \"$WORKSPACE\" --engine {} --device {} --model {}",
+                setup_env, q_in,
                 match config.asr_engine {
                     crate::config::app_config::AsrEngine::WhisperSk => "whisper_sk",
                     crate::config::app_config::AsrEngine::FasterWhisper => "faster_whisper",
@@ -479,16 +486,16 @@ fi
                 PathMapper::escape_bash_arg(&config.whisper_sk_model_id)
             ),
             PipelineStageId::Translate => format!(
-                "{} {}/stage_3_translate.py --workspace {} --meta {} --model {} --src {} --tgt {}",
-                python_bin, script_dir, q_ws, q_meta,
+                "{}$PYTHON_BIN $SCRIPT_DIR/stage_3_translate.py --workspace \"$WORKSPACE\" --meta {} --model {} --src {} --tgt {}",
+                setup_env, q_meta,
                 PathMapper::escape_bash_arg(&config.mt_model_id),
                 PathMapper::escape_bash_arg(&config.source_lang),
                 PathMapper::escape_bash_arg(&config.target_lang)
             ),
             PipelineStageId::Review => "echo 'Review stage completed'".to_string(),
             PipelineStageId::Tts => format!(
-                "{} {}/stage_4_tts.py --workspace {} --meta {} --engine {} --voice {} --speed {:.2}",
-                python_bin, script_dir, q_ws, q_meta,
+                "{}$PYTHON_BIN $SCRIPT_DIR/stage_4_tts.py --workspace \"$WORKSPACE\" --meta {} --engine {} --voice {} --speed {:.2}",
+                setup_env, q_meta,
                 match config.tts_engine {
                     crate::config::app_config::TtsEngine::Piper => "piper",
                     crate::config::app_config::TtsEngine::Kokoro => "kokoro",
@@ -498,8 +505,8 @@ fi
                 config.tts_speed_factor
             ),
             PipelineStageId::Lipsync => format!(
-                "{} {}/stage_5_lipsync.py --input {} --workspace {} --meta {} --engine {} --batch-size {} --rocm-sdpa-fallback {}",
-                python_bin, script_dir, q_in, q_ws, q_meta,
+                "{}$PYTHON_BIN $SCRIPT_DIR/stage_5_lipsync.py --input {} --workspace \"$WORKSPACE\" --meta {} --engine {} --batch-size {} --rocm-sdpa-fallback {}",
+                setup_env, q_in, q_meta,
                 match config.lipsync_engine {
                     LipsyncEngine::LatentSync15 => "latentsync",
                     LipsyncEngine::MuseTalk => "musetalk",
@@ -508,8 +515,8 @@ fi
                 if config.rocm_sdpa_fallback { "1" } else { "0" }
             ),
             PipelineStageId::Mux => format!(
-                "{} {}/stage_6_mux.py --input {} --output {} --workspace {} --meta {} --ducking {:.1}",
-                python_bin, script_dir, q_in, q_out, q_ws, q_meta, config.ducking_level_db
+                "{}$PYTHON_BIN $SCRIPT_DIR/stage_6_mux.py --input {} --output {} --workspace \"$WORKSPACE\" --meta {} --ducking {:.1}",
+                setup_env, q_in, q_out, q_meta, config.ducking_level_db
             ),
         }
     }

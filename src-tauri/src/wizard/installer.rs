@@ -62,6 +62,8 @@ impl WizardInstaller {
 
         #[cfg(target_os = "windows")]
         {
+            use std::os::windows::process::CommandExt;
+
             let ps_script = format!(
                 r#"Start-Process wsl.exe -ArgumentList '--install -d {0} --no-launch' -Verb RunAs -Wait"#,
                 distro
@@ -82,6 +84,7 @@ impl WizardInstaller {
             }
 
             let mut cmd = tokio::process::Command::new("powershell.exe");
+            cmd.creation_flags(0x08000000);
             cmd.args([
                 "-NoProfile",
                 "-ExecutionPolicy",
@@ -94,7 +97,7 @@ impl WizardInstaller {
             if let Some(ref tx) = log_tx {
                 let _ = tx.send(ProcessLogLine {
                     stream: "system".to_string(),
-                    message: "Inštalačný proces WSL dokončený. Ak ide o prvú inštaláciu WSL, reštartujte počítač.".to_string(),
+                    message: "Inštalačný proces WSL dokončený.".to_string(),
                     timestamp_ms: chrono::Utc::now().timestamp_millis(),
                     is_progress: false,
                     progress_percent: Some(100.0),
@@ -124,7 +127,7 @@ impl WizardInstaller {
         }
     }
 
-    /// Step 2: Idempotent install of Ubuntu system packages
+    /// Step 2: Idempotent install of Ubuntu system packages as root
     pub async fn install_system_packages(
         &self,
         distro: &str,
@@ -134,9 +137,9 @@ impl WizardInstaller {
             return Ok(false);
         }
 
-        let cmd = r"
+        let cmd = r#"
 export DEBIAN_FRONTEND=noninteractive
-sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
@@ -149,12 +152,12 @@ sudo apt-get update && sudo apt-get install -y --no-install-recommends \
     libsndfile1 \
     libgl1 \
     libglib2.0-0
-";
-        let res = WslExecutor::run_streaming_command(
+"#;
+        let res = WslExecutor::run_streaming_command_as_root(
             distro,
             cmd,
             log_tx,
-            None,
+            Some(std::time::Duration::from_secs(600)),
             Some(self.is_cancelled.clone()),
         )
         .await?;
@@ -175,27 +178,31 @@ sudo apt-get update && sudo apt-get install -y --no-install-recommends \
 
         let cmd = format!(
             r#"
-mkdir -p {0} {1}
-if [ ! -f "{0}/bin/python" ]; then
-    echo "Vytváram virtuálne prostredie v {0}..."
-    python3 -m venv {0}
+VENV="{0}"
+WORKSPACE="{1}"
+VENV="${{VENV/#\~/$HOME}}"
+WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
+
+mkdir -p "$VENV" "$WORKSPACE"
+if [ ! -f "$VENV/bin/python" ]; then
+    echo "Vytváram virtuálne prostredie v $VENV..."
+    python3 -m venv "$VENV"
 fi
 
-source {0}/bin/activate
+source "$VENV/bin/activate"
 pip install --upgrade pip setuptools wheel
 
 echo "Inštalujem PyTorch s podporou AMD ROCm..."
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
 
-echo "Inštalujem dabingové balíčky (open_dubbing, transformers, piper-tts, kokoro-onnx, soundfile, accelerate)..."
+echo "Inštalujem dabingové balíčky (transformers, piper-tts, kokoro-onnx, soundfile, accelerate)..."
 pip install transformers accelerate sentencepiece sacremoses piper-tts kokoro-onnx soundfile librosa scipy pydub ffmpeg-python tqdm requests
 pip install "open_dubbing[coqui]" --no-deps || true
-pip install git+https://github.com/huggingface/transformers.git || true
 
-mkdir -p {1}/scripts
+mkdir -p "$WORKSPACE/scripts"
 for cand in /mnt/c/Dabovanie-vide-lok-lne-main/scripts /mnt/c/*/Dabovanie-vide-lok-lne*/scripts /mnt/c/*/*/scripts; do
     if [ -d "$cand" ] && [ -f "$cand/stage_1_demux.py" ]; then
-        cp -ru "$cand"/*.py {1}/scripts/ 2>/dev/null || true
+        cp -ru "$cand"/*.py "$WORKSPACE/scripts/" 2>/dev/null || true
         break
     fi
 done
@@ -207,7 +214,7 @@ done
             distro,
             &cmd,
             log_tx,
-            None,
+            Some(std::time::Duration::from_secs(1800)),
             Some(self.is_cancelled.clone()),
         )
         .await?;
@@ -228,25 +235,30 @@ done
 
         let cmd = format!(
             r#"
-mkdir -p {1}
-cd {1}
-source {0}/bin/activate
+VENV="{0}"
+WORKSPACE="{1}"
+VENV="${{VENV/#\~/$HOME}}"
+WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
+
+mkdir -p "$WORKSPACE"
+cd "$WORKSPACE"
+source "$VENV/bin/activate"
 
 # 1. LatentSync 1.5 (Use LatentSync v1.5 for 6.5-8GB VRAM constraint)
-if [ ! -d "{1}/latentsync" ]; then
+if [ ! -d "$WORKSPACE/latentsync" ]; then
     echo "Klonujem repozitár LatentSync (v1.5)..."
-    git clone https://github.com/bytedance/LatentSync.git {1}/latentsync
-    cd {1}/latentsync
+    git clone https://github.com/bytedance/LatentSync.git "$WORKSPACE/latentsync"
+    cd "$WORKSPACE/latentsync"
     pip install -r requirements.txt || true
     pip install diffusers omegaconf einops decord face-alignment mediapipe
 fi
 
 # 2. MuseTalk (Ultra-lightweight fallback engine for ROCm)
-cd {1}
-if [ ! -d "{1}/musetalk" ]; then
+cd "$WORKSPACE"
+if [ ! -d "$WORKSPACE/musetalk" ]; then
     echo "Klonujem repozitár MuseTalk..."
-    git clone https://github.com/TMElyralab/MuseTalk.git {1}/musetalk
-    cd {1}/musetalk
+    git clone https://github.com/TMElyralab/MuseTalk.git "$WORKSPACE/musetalk"
+    cd "$WORKSPACE/musetalk"
     pip install -r requirements.txt || true
     pip install mmpose mmcv mmengine
 fi
@@ -258,7 +270,7 @@ fi
             distro,
             &cmd,
             log_tx,
-            None,
+            Some(std::time::Duration::from_secs(1800)),
             Some(self.is_cancelled.clone()),
         )
         .await?;
@@ -280,12 +292,17 @@ fi
 
         let py_downloader = format!(
             r#"
-{0}/bin/python -c "
+VENV="{0}"
+WORKSPACE="{1}"
+VENV="${{VENV/#\~/$HOME}}"
+WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
+
+"$VENV/bin/python" -c "
 import os, sys, requests, shutil
 from tqdm import tqdm
 
 model_id = '{2}'
-workspace = '{1}'
+workspace = os.path.expanduser('{1}')
 target_dir = os.path.join(workspace, 'models')
 os.makedirs(target_dir, exist_ok=True)
 
@@ -351,7 +368,7 @@ print('HOTOVO')
             distro,
             &py_downloader,
             log_tx,
-            None,
+            Some(std::time::Duration::from_secs(1800)),
             Some(self.is_cancelled.clone()),
         )
         .await?;
