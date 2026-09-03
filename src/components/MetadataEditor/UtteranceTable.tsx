@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Save,
   Plus,
@@ -10,6 +10,10 @@ import {
   Download,
   AlertCircle,
   HelpCircle,
+  Search,
+  Copy,
+  Check,
+  FileText,
 } from 'lucide-react';
 import { UtteranceItem, UtteranceMetadataDocument } from '../../types/metadata';
 import { invokeCommand } from '../../utils/tauriBridge';
@@ -31,6 +35,8 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [copiedNotification, setCopiedNotification] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
@@ -108,6 +114,8 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
         document: { ...doc, is_verified_by_user: true },
       });
       setHasUnsavedChanges(false);
+      setCopiedNotification('Metadáta úspešne uložené!');
+      setTimeout(() => setCopiedNotification(null), 2500);
     } catch (err) {
       console.error('Failed to save metadata', err);
     } finally {
@@ -115,17 +123,47 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
     }
   };
 
+  const handleExportSrt = () => {
+    if (!doc) return;
+    let srt = '';
+    doc.utterances.forEach((utt, idx) => {
+      const formatTime = (secs: number) => {
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = Math.floor(secs % 60);
+        const ms = Math.round((secs - Math.floor(secs)) * 1000);
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+      };
+      srt += `${idx + 1}\n${formatTime(utt.start_time)} --> ${formatTime(utt.end_time)}\n${utt.chinese_text}\n${utt.slovak_text}\n\n`;
+    });
+
+    navigator.clipboard.writeText(srt);
+    setCopiedNotification('SRT titulky skopírované do schránky!');
+    setTimeout(() => setCopiedNotification(null), 2500);
+  };
+
   const handleTogglePlay = (id: string) => {
     if (playingId === id) {
       setPlayingId(null);
     } else {
       setPlayingId(id);
-      // Simulate audio play preview for 3s
       setTimeout(() => {
         setPlayingId((curr) => (curr === id ? null : curr));
       }, 3000);
     }
   };
+
+  const filteredUtterances = useMemo(() => {
+    if (!doc) return [];
+    if (!searchQuery.trim()) return doc.utterances;
+    const q = searchQuery.toLowerCase();
+    return doc.utterances.filter(
+      (u) =>
+        u.slovak_text.toLowerCase().includes(q) ||
+        u.chinese_text.toLowerCase().includes(q) ||
+        u.speaker_id.toLowerCase().includes(q)
+    );
+  }, [doc, searchQuery]);
 
   if (!doc) {
     return <div className="p-8 text-center text-slate-400">Načítavam utterance_metadata...</div>;
@@ -140,13 +178,28 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
             <h2 className="text-xl font-bold text-slate-100">Editor Metadát & Prekladu</h2>
             <Badge variant="primary">utterance_metadata.json</Badge>
             {hasUnsavedChanges && <Badge variant="warning">Neuložené zmeny</Badge>}
+            {copiedNotification && (
+              <Badge variant="success" className="animate-fadeIn">
+                <Check className="w-3 h-3 mr-1 inline" /> {copiedNotification}
+              </Badge>
+            )}
           </div>
           <p className="text-xs text-slate-400 mt-1">
             Interaktívna kontrola ASR segmentácie, úprava čínštiny, ladenie rýchlosti TTS pred syntézou reči.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={<FileText className="w-3.5 h-3.5 text-slate-400" />}
+            onClick={handleExportSrt}
+            className="text-xs"
+          >
+            Kopírovať SRT
+          </Button>
+
           <Button
             variant="secondary"
             size="sm"
@@ -199,7 +252,7 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
         <div>
           <span className="text-[11px] text-slate-400 block">Počet replík:</span>
           <span className="font-semibold text-xs text-slate-200">
-            {doc.utterances.length} segmentov
+            {doc.utterances.length} segmentov {searchQuery && `(${filteredUtterances.length} nájdených)`}
           </span>
         </div>
         <div>
@@ -210,12 +263,32 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
         </div>
       </div>
 
+      {/* Search and filter bar */}
+      <div className="relative">
+        <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Vyhľadať v slovenskom alebo čínskom texte..."
+          className="w-full bg-slate-900/70 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-200"
+          >
+            Vyčistiť
+          </button>
+        )}
+      </div>
+
       {/* Main Table */}
-      <Card className="p-0 overflow-hidden border-slate-800">
+      <Card className="p-0 overflow-hidden border-slate-800 shadow-xl shadow-slate-950/40">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-950/80 border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+              <tr className="bg-slate-950/90 border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                 <th className="py-3 px-3 text-center w-12">Audio</th>
                 <th className="py-3 px-3 w-36">Hovorca & Čas</th>
                 <th className="py-3 px-4 w-1/3">Slovenský originál (ASR Whisper)</th>
@@ -224,14 +297,14 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
               </tr>
             </thead>
             <tbody>
-              {doc.utterances.length === 0 ? (
+              {filteredUtterances.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-12 text-center text-slate-500 text-xs">
-                    Žiadne repliky. Kliknite na 'Pridať repliku' alebo spustite fázu ASR.
+                    {searchQuery ? 'Žiadne repliky nezodpovedajú vyhľadávaniu.' : 'Žiadne repliky. Kliknite na "Pridať repliku" alebo spustite fázu ASR.'}
                   </td>
                 </tr>
               ) : (
-                doc.utterances.map((item, idx) => (
+                filteredUtterances.map((item, idx) => (
                   <UtteranceRow
                     key={item.id}
                     item={item}
@@ -250,3 +323,4 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
     </div>
   );
 };
+

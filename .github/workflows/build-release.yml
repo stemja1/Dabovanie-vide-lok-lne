@@ -1,0 +1,63 @@
+name: "Release Windows Build"
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest"
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Tauri Application (Windows EXE & MSI)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v1.1.2
+          releaseName: "AI Dabing Štúdio v1.1.2 (Pre-built Windows App)"
+          releaseBody: |
+            ## 🚀 Predkompilovaná verzia AI Dabing Štúdio pre Windows 11
+            
+            Stiahnite si inštalátor `.msi` alebo `.exe` a dvakrát naň kliknite:
+            - **AI Dabing Studio_0.1.0_x64_en-US.msi** (Windows inštalátor)
+            - **ai-dubbing-orchestrator.exe** (Samostatný spustiteľný program)
+            
+            ### Požiadavky:
+            - Windows 11 s WSL2 (Ubuntu 24.04)
+            - AMD Radeon RX 7700 XT (alebo ľubovoľná AMD/NVIDIA grafická karta)
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

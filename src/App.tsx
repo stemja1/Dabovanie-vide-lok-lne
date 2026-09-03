@@ -53,6 +53,25 @@ export const App: React.FC = () => {
     return () => unsubState();
   }, []);
 
+  // Keyboard shortcut listener for power UX (1-6 tab switching)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is currently typing in an input or textarea
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+        return;
+      }
+      if (e.key === '1') setActiveTab('pipeline');
+      else if (e.key === '2') setActiveTab('metadata');
+      else if (e.key === '3') setActiveTab('player');
+      else if (e.key === '4') setActiveTab('wizard');
+      else if (e.key === '5') setActiveTab('logs');
+      else if (e.key === '6') setActiveTab('settings');
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const isPausedForReview = pipelineState?.is_paused_for_review || false;
   const hasOutput = !!pipelineState?.output_video_path_win && pipelineState?.stages.every((s) => s.status === 'completed');
 

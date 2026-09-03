@@ -423,6 +423,22 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
                 Pre komerčné nasadenie zvoľte v nastaveniach <strong>Piper TTS (MIT)</strong> alebo <strong>Kokoro TTS (Apache 2.0)</strong>. Model Coqui XTTS-v2 je viazaný nekomerčnou CPML licenciou.
               </div>
             </div>
+
+            {/* Windows SmartScreen & Defender Guide */}
+            <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-slate-200 text-xs space-y-3">
+              <div className="flex items-center gap-2 text-indigo-400 font-semibold text-sm">
+                <ShieldAlert className="w-4 h-4" />
+                <span>Čo robiť, ak Windows SmartScreen zobrazí modré varovanie?</span>
+              </div>
+              <p className="text-slate-300 text-xs leading-relaxed">
+                Pretože ide o open-source nástroj zostavený pre vaše PC, Windows SmartScreen môže pri prvom spustení zobraziť: <em>"Systém Windows ochránil váš počítač"</em> (neznámy vydavateľ).
+              </p>
+              <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5 text-[11px]">
+                <p><strong>1. Krok:</strong> V modrom okne kliknite na text <strong>"Ďalšie informácie" (More info)</strong>.</p>
+                <p><strong>2. Krok:</strong> V pravom dolnom rohu kliknite na tlačidlo <strong>"Spustiť aj tak" (Run anyway)</strong>.</p>
+                <p><strong>3. Krok (Alternatíva cez Vlastnosti):</strong> Kliknite pravým tlačidlom na stiahnutý súbor &rarr; <em>Vlastnosti (Properties)</em> &rarr; v záložke Všeobecné zaškrtnite <strong>Odblokovať (Unblock)</strong> &rarr; Použiť.</p>
+              </div>
+            </div>
           </Card>
         </div>
       )}
