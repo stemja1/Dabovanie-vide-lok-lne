@@ -67,6 +67,26 @@ impl PipelineOrchestrator {
         self.is_cancelled.store(false, Ordering::SeqCst);
     }
 
+    /// Ensures all Python pipeline scripts are present in the WSL workspace directory
+    pub async fn ensure_scripts_synced(distro: &str, workspace_dir: &str) {
+        let ws = workspace_dir.trim_end_matches('/');
+        let cmd = format!(
+            r#"
+mkdir -p "{0}/scripts"
+if [ ! -f "{0}/scripts/stage_1_demux.py" ]; then
+    for cand in /mnt/c/Dabovanie-vide-lok-lne-main/scripts /mnt/c/*/Dabovanie-vide-lok-lne*/scripts /mnt/c/*/*/scripts; do
+        if [ -d "$cand" ] && [ -f "$cand/stage_1_demux.py" ]; then
+            cp -ru "$cand"/*.py "{0}/scripts/" 2>/dev/null || true
+            break
+        fi
+    done
+fi
+"#,
+            ws
+        );
+        let _ = WslExecutor::run_command_output(distro, &cmd).await;
+    }
+
     /// Prepares pipeline for a given input video
     pub async fn set_input_video(&self, win_video_path: &str, distro: &str) {
         let input_wsl = PathMapper::win_to_wsl(win_video_path);
@@ -110,6 +130,9 @@ impl PipelineOrchestrator {
         log_tx: Option<mpsc::UnboundedSender<ProcessLogLine>>,
     ) -> Result<()> {
         self.reset_cancel();
+
+        // Ensure scripts are synced to workspace directory in WSL
+        Self::ensure_scripts_synced(&config.wsl_distro, &config.workspace_dir).await;
 
         {
             let mut st = self.state.lock().await;

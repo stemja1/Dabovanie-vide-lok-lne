@@ -191,6 +191,14 @@ echo "Inštalujem dabingové balíčky (open_dubbing, transformers, piper-tts, k
 pip install transformers accelerate sentencepiece sacremoses piper-tts kokoro-onnx soundfile librosa scipy pydub ffmpeg-python tqdm requests
 pip install "open_dubbing[coqui]" --no-deps || true
 pip install git+https://github.com/huggingface/transformers.git || true
+
+mkdir -p {1}/scripts
+for cand in /mnt/c/Dabovanie-vide-lok-lne-main/scripts /mnt/c/*/Dabovanie-vide-lok-lne*/scripts /mnt/c/*/*/scripts; do
+    if [ -d "$cand" ] && [ -f "$cand/stage_1_demux.py" ]; then
+        cp -ru "$cand"/*.py {1}/scripts/ 2>/dev/null || true
+        break
+    fi
+done
 "#,
             venv_path, workspace_dir
         );

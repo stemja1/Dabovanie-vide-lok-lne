@@ -6,50 +6,66 @@ $$\text{Slovenské Video} \longrightarrow \text{Whisper-SK ASR} \longrightarrow 
 
 ---
 
-## ⚡ Rýchly Štart na Windows 11
+## ⚡ Ako program spustiť (po nainštalovaní základných prerekvizít)
 
-### 1. Krok: Automatická inštalácia nástrojov (PowerShell ako Správca)
-Ak spúšťate projekt prvýkrát a nemáte ešte nainštalovaný Node.js (`npm`), Rust ani WSL2, otvorte **PowerShell ako Správca** (Run as Administrator) a spustite:
+Akonáhle máte jednorazovo nastavené nástroje, pre každodennú prácu si vyberte **jednu z nasledujúcich možností**:
 
-```powershell
-cd C:\Dabovanie-vide-lok-lne-main
-powershell -ExecutionPolicy Bypass -File .\install_prerequisites.ps1
-```
-
-Tento skript automaticky overí a nainštaluje:
-- **Node.js 20+ (LTS)** a správcu balíčkov `npm`
-- **Rust toolchain** (`rustup`, `cargo`)
-- **Microsoft C++ Build Tools** (MSVC pre kompiláciu Tauri)
-- **WSL2 s Ubuntu 24.04** pre beh AI modelov
+### Spôsob 1: Dvojklik na `start_app.bat` (Najpohodlnejšie)
+1. Otvorte priečinok `C:\Dabovanie-vide-lok-lne-main`.
+2. Dvakrát kliknite na **`start_app.bat`**.
+> 💡 *Tip: Kliknite pravým tlačidlom na `start_app.bat` $\rightarrow$ **Odoslať kam $\rightarrow$ Pracovná plocha (vytvoriť odkaz)** pre spúšťanie priamo z plochy.*
 
 ---
 
-### 2. Krok: Spustenie aplikácie (Bežný používateľ)
-Po dokončení inštalácie otvorte **nové bežné okno PowerShellu** (alebo iba dvakrát kliknite na súbor `start_app.bat` v Prieskumníkovi Windows):
-
+### Spôsob 2: Cez bežný PowerShell
+Otvorte bežné okno PowerShellu:
 ```powershell
 cd C:\Dabovanie-vide-lok-lne-main
-
-# Nainštaluje frontendové balíčky (stačí vykonať iba raz)
-npm install
-
-# Spustí lokálny dev server a otvorí desktopové okno aplikácie
 npm run tauri dev
 ```
 
 ---
 
-## ❓ Prečo vznikali chyby pri prvom spúšťaní?
+### Spôsob 3: Vytvorenie samostatného `.exe` súboru (Release)
+Ak chcete vyrobiť trvalý `.exe` program pre Windows bez potreby terminálu:
+```powershell
+npm run tauri build
+```
+Váš hotový program nájdete v: `src-tauri/target/release/ai-dubbing-orchestrator.exe` a inštalátor v `src-tauri/target/release/bundle/msi/`.
 
-1. **`npm : The term 'npm' is not recognized...`**
+---
+
+## 🚀 Jednorazová inštalácia nástrojov (pre nové PC / prvý štart)
+
+---
+
+## ❓ Riešenie častých situácií pri prvom spúšťaní
+
+1. **Blokovanie skriptov v PowerShell (`ExecutionPolicy`):**
+   - **Chyba:** `File ... cannot be loaded because running scripts is disabled on this system.`
+   - **Riešenie:** V PowerShell zadajte príkaz:
+     ```powershell
+     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+     ```
+     Alebo spustite skript s bypassom: `powershell -ExecutionPolicy Bypass -File .\install_prerequisites.ps1`
+     Alebo použite `start_app.bat` (dávkové súbory `.bat` systém nikdy neblokuje).
+
+2. **`npm : The term 'npm' is not recognized...`**
    - **Dôvod:** Nástroj `npm` je súčasťou programu **Node.js**. Ak Node.js nie je na počítači nainštalovaný, Windows príkaz `npm` nepozná.
    - **Riešenie:** Spustite `.\install_prerequisites.ps1` alebo nainštalujte Node.js z [nodejs.org](https://nodejs.org).
 
-2. **`rustup : The term 'rustup' is not recognized...`**
+3. **`rustup : The term 'rustup' is not recognized...`**
    - **Dôvod:** Po inštalácii nového programu do Windows je potrebné zatvoriť a znovu otvoriť okno PowerShellu, aby sa načítali nové systémové cesty (`PATH`).
 
-3. **`The requested operation requires elevation.`**
+4. **`The requested operation requires elevation.`**
    - **Dôvod:** Príkaz `wsl --install` vyžaduje práva správcu (Spustiť ako správca / Run as Administrator).
+
+---
+
+## ⚙️ Potrebujem aplikáciu najprv skompilovať?
+
+- **Pre okamžitý beh / testovanie:** Nie! Príkaz `npm run tauri dev` (alebo dvojklik na `start_app.bat`) **automaticky skompiluje Rust backend na pozadí**, spustí Vite a otvorí okno aplikácie.
+- **Pre vytvorenie samostatného inštalátora (.msi / .exe):** Spustite `npm run tauri build`. Hotový inštalačný balíček nájdete v `src-tauri/target/release/bundle/msi/`.
 
 ---
 

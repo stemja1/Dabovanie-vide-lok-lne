@@ -488,6 +488,19 @@
             <p><strong>Prečo nastala:</strong> Príkaz <code>wsl --install</code> zapína systémové virtualizačné komponenty vo Windows 11, čo z bezpečnostných dôvodov vyžaduje práva administrátora.</p>
             <p><strong>Riešenie:</strong> PowerShell je potrebné otvoriť cez <strong>"Spustiť ako správca" (Run as Administrator)</strong>.</p>
         </div>
+
+        <div class="error-card">
+            <h4>🛡️ Čo ak Windows blokuje spúšťanie skriptov? (ExecutionPolicy)</h4>
+            <p><strong>Hláška:</strong> <code>File ... cannot be loaded because running scripts is disabled on this system.</code></p>
+            <p><strong>Prečo nastala:</strong> Systém Windows má z bezpečnostných dôvodov predvolene zablokované spúšťanie <code>.ps1</code> skriptov.</p>
+            <p><strong>4 Jednoduché riešenia:</strong></p>
+            <ul>
+                <li><strong>Riešenie 1 (Odporúčané):</strong> V okne PowerShellu zadajte:<br><code>Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass</code> a stlačte Enter (povolí skripty iba pre aktuálne otvorené okno).</li>
+                <li><strong>Riešenie 2:</strong> Spustite skript priamo s prepínačom:<br><code>powershell -ExecutionPolicy Bypass -File .\install_prerequisites.ps1</code></li>
+                <li><strong>Riešenie 3:</strong> Použite dávkový súbor <code>start_app.bat</code> (dávkové súbory <code>.bat</code> Windows neblokuje).</li>
+                <li><strong>Riešenie 4:</strong> Odblokujte súbor príkazom: <code>Unblock-File .\install_prerequisites.ps1</code></li>
+            </ul>
+        </div>
     </section>
 
     <!-- 2. RYCHLA INSTALACIA -->
@@ -565,39 +578,51 @@
 
     <!-- 4. SPUSTENIE APLIKACIE -->
     <section id="spustenie-aplikacie">
-        <h2><span class="section-num">4</span> Ako spustiť aplikáciu</h2>
-        <p>Po dokončení inštalácie prerekvizít <strong>zatvorte všetky staré okná PowerShellu</strong> a otvorte nový terminál (už nie je potrebný správca).</p>
+        <h2><span class="section-num">4</span> Ako následne spustiť program po nainštalovaní základných vecí</h2>
+        <p>Akonáhle máte na počítači jednorazovo nastavené prerekvizity (Node.js, Rust a Ubuntu vo WSL2), <strong>už nikdy nemusíte nič inštalovať ako správca</strong>. Program môžete spustiť kedykoľvek jedným z nasledujúcich spôsobov:</p>
+
+        <div class="callout callout-success">
+            <h4>⚡ Najrýchlejší a najjednoduchší spôsob (Každodenné spúšťanie)</h4>
+            <p>V Prieskumníkovi Windows otvorte priečinok <code>C:\Dabovanie-vide-lok-lne-main</code> a <strong>dvakrát kliknite na súbor <code>start_app.bat</code></strong>. Tento súbor automaticky pripraví prostredie a otvorí okno aplikácie.</p>
+        </div>
 
         <div class="grid-2">
-            <div class="card">
+            <div class="card featured">
                 <div class="card-title">
-                    <span>Možnosť 1: Dvojklik na <code>start_app.bat</code></span>
-                    <span class="badge badge-green">Pohodlné</span>
+                    <span>Spôsob 1: Dvojklik na <code>start_app.bat</code></span>
+                    <span class="badge badge-green">Odporúčané</span>
                 </div>
-                <p>V Prieskumníkovi Windows otvorte priečinok <code>C:\Dabovanie-vide-lok-lne-main</code> a dvakrát kliknite na súbor <strong><code>start_app.bat</code></strong>.</p>
-                <p>Súbor automaticky skontroluje prostredie, stiahne knižnice a spustí okno aplikácie.</p>
+                <ol>
+                    <li>Otvorte priečinok <code>C:\Dabovanie-vide-lok-lne-main</code>.</li>
+                    <li>Dvakrát kliknite na <strong><code>start_app.bat</code></strong>.</li>
+                </ol>
+                <p style="margin-top:10px;"><em>Tip: Kliknite na súbor pravým tlačidlom myši &rarr; <strong>Odoslať kam &rarr; Pracovná plocha (vytvoriť odkaz)</strong>. Získate tak ikonu programu priamo na ploche!</em></p>
             </div>
 
             <div class="card">
                 <div class="card-title">
-                    <span>Možnosť 2: Cez bežný PowerShell</span>
-                    <span class="badge badge-blue">Vývojársky režim</span>
+                    <span>Spôsob 2: Cez bežný PowerShell</span>
+                    <span class="badge badge-blue">Terminál</span>
                 </div>
-                <p>V novom okne PowerShellu zadajte:</p>
-                <pre><code><span class="cmd-comment"># 1. Prejdite do projektu:</span>
+                <p>Otvorte bežný PowerShell (už nie ako správca) a zadajte:</p>
+                <pre><code><span class="cmd-comment"># Prechod do priečinka a okamžité spustenie:</span>
 <span class="cmd-kw">cd</span> C:\Dabovanie-vide-lok-lne-main
-
-<span class="cmd-comment"># 2. Nainštalujte frontend balíčky (stačí vykonať iba raz):</span>
-<span class="cmd-kw">npm</span> install
-
-<span class="cmd-comment"># 3. Spustite aplikáciu:</span>
 <span class="cmd-kw">npm</span> run tauri dev</code></pre>
             </div>
         </div>
 
-        <div class="callout callout-success">
-            <h4>Výsledok</h4>
-            <p>Po skompilovaní sa vám na ploche otvorí tmavé okno desktopovej aplikácie <strong>AI Dabing Štúdio (SK → ZH)</strong>.</p>
+        <div class="card">
+            <div class="card-title">
+                <span>Spôsob 3: Vytvorenie samostatného <code>.exe</code> programu (Release Build)</span>
+                <span class="badge badge-purple">Trvalý program</span>
+            </div>
+            <p>Ak chcete vytvoriť samostatný <code>.exe</code> program, ktorý sa spustí okamžite bez terminálu:</p>
+            <pre><code><span class="cmd-comment"># Spustite v PowerShell (vytvorí samostatný Windows program):</span>
+<span class="cmd-kw">npm</span> run tauri build
+
+<span class="cmd-comment"># Váš hotový .exe program a inštalátor nájdete v:</span>
+<span class="cmd-str">src-tauri/target/release/ai-dubbing-orchestrator.exe</span>
+<span class="cmd-str">src-tauri/target/release/bundle/msi/AI Dabing Studio_0.1.0_x64_en-US.msi</span></code></pre>
         </div>
     </section>
 
