@@ -1,6 +1,6 @@
 {
   "name": "ai-dubbing-orchestrator",
-  "version": "0.1.0",
+  "version": "1.1.9",
   "type": "module",
   "description": "Desktopový orchestrátor pre lokálny AI dabing (SK -> ZH)",
   "scripts": {

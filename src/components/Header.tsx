@@ -38,7 +38,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h1 className="font-bold text-base text-slate-100 tracking-tight">AI Dabing Štúdio</h1>
-            <Badge variant="primary" size="sm">SK → ZH v1.0</Badge>
+            <Badge variant="primary" size="sm">SK → ZH v1.1.9</Badge>
           </div>
           <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
