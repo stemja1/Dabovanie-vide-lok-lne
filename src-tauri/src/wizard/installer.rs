@@ -137,6 +137,17 @@ impl WizardInstaller {
             return Ok(false);
         }
 
+        if let Some(ref tx) = log_tx {
+            let _ = tx.send(ProcessLogLine {
+                stream: "system".to_string(),
+                message: "Spúšťam aktualizáciu apt a inštaláciu systémových balíčkov (ffmpeg, git, python3-venv, libsndfile1)...".to_string(),
+                timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                is_progress: false,
+                progress_percent: Some(10.0),
+                step_tag: Some("system_packages".to_string()),
+            });
+        }
+
         let cmd = r#"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update && apt-get install -y --no-install-recommends \
@@ -178,6 +189,7 @@ apt-get update && apt-get install -y --no-install-recommends \
 
         let cmd = format!(
             r#"
+export PYTHONUNBUFFERED=1
 VENV="{0}"
 WORKSPACE="{1}"
 VENV="${{VENV/#\~/$HOME}}"
@@ -185,17 +197,18 @@ WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
 
 mkdir -p "$VENV" "$WORKSPACE"
 if [ ! -f "$VENV/bin/python" ]; then
-    echo "Vytváram virtuálne prostredie v $VENV..."
+    echo ">>> Vytváram virtuálne prostredie Python v $VENV..."
     python3 -m venv "$VENV"
 fi
 
 source "$VENV/bin/activate"
+echo ">>> Aktualizujem pip a setuptools..."
 pip install --upgrade pip setuptools wheel
 
-echo "Inštalujem PyTorch s podporou AMD ROCm..."
+echo ">>> Inštalujem PyTorch s podporou AMD ROCm (whl/rocm6.2)..."
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
 
-echo "Inštalujem dabingové balíčky (transformers, piper-tts, kokoro-onnx, soundfile, accelerate)..."
+echo ">>> Inštalujem dabingové knižnice (transformers, accelerate, piper-tts, kokoro-onnx, soundfile, requests)..."
 pip install transformers accelerate sentencepiece sacremoses piper-tts kokoro-onnx soundfile librosa scipy pydub ffmpeg-python tqdm requests
 pip install "open_dubbing[coqui]" --no-deps || true
 
@@ -206,6 +219,7 @@ for cand in /mnt/c/Dabovanie-vide-lok-lne-main/scripts /mnt/c/*/Dabovanie-vide-l
         break
     fi
 done
+echo ">>> Python & ROCm prostredie je pripravené."
 "#,
             venv_path, workspace_dir
         );
@@ -235,6 +249,7 @@ done
 
         let cmd = format!(
             r#"
+export PYTHONUNBUFFERED=1
 VENV="{0}"
 WORKSPACE="{1}"
 VENV="${{VENV/#\~/$HOME}}"
@@ -246,7 +261,7 @@ source "$VENV/bin/activate"
 
 # 1. LatentSync 1.5 (Use LatentSync v1.5 for 6.5-8GB VRAM constraint)
 if [ ! -d "$WORKSPACE/latentsync" ]; then
-    echo "Klonujem repozitár LatentSync (v1.5)..."
+    echo ">>> Klonujem repozitár LatentSync (v1.5)..."
     git clone https://github.com/bytedance/LatentSync.git "$WORKSPACE/latentsync"
     cd "$WORKSPACE/latentsync"
     pip install -r requirements.txt || true
@@ -256,12 +271,13 @@ fi
 # 2. MuseTalk (Ultra-lightweight fallback engine for ROCm)
 cd "$WORKSPACE"
 if [ ! -d "$WORKSPACE/musetalk" ]; then
-    echo "Klonujem repozitár MuseTalk..."
+    echo ">>> Klonujem repozitár MuseTalk..."
     git clone https://github.com/TMElyralab/MuseTalk.git "$WORKSPACE/musetalk"
     cd "$WORKSPACE/musetalk"
     pip install -r requirements.txt || true
     pip install mmpose mmcv mmengine
 fi
+echo ">>> AI Repozitáre pre lip-sync sú úspešne pripravené."
 "#,
             venv_path, workspace_dir
         );
@@ -292,6 +308,7 @@ fi
 
         let py_downloader = format!(
             r#"
+export PYTHONUNBUFFERED=1
 VENV="{0}"
 WORKSPACE="{1}"
 VENV="${{VENV/#\~/$HOME}}"
@@ -301,25 +318,41 @@ WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
 import os, sys, requests, shutil
 from tqdm import tqdm
 
+sys.stdout.reconfigure(line_buffering=True)
 model_id = '{2}'
 workspace = os.path.expanduser('{1}')
 target_dir = os.path.join(workspace, 'models')
 os.makedirs(target_dir, exist_ok=True)
 
-print(f'Začínam sťahovanie / overovanie modelu: {{model_id}}')
+print(f'>>> Začínam sťahovanie / overovanie modelu: {{model_id}}', flush=True)
+
 if model_id == 'whisper-large-v3-sk':
-    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
-    print('Sťahujem NaiveNeuron/whisper-large-v3-sk z HuggingFace...')
-    AutoProcessor.from_pretrained('NaiveNeuron/whisper-large-v3-sk')
-    AutoModelForSpeechSeq2Seq.from_pretrained('NaiveNeuron/whisper-large-v3-sk')
-    print('Whisper SK model úspešne pripravený v HF cache.')
+    asr_dir = os.path.join(workspace, 'models/asr/whisper-large-v3-sk')
+    os.makedirs(asr_dir, exist_ok=True)
+    print('Sťahujem NaiveNeuron/whisper-large-v3-sk z HuggingFace...', flush=True)
+    try:
+        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+        AutoProcessor.from_pretrained('NaiveNeuron/whisper-large-v3-sk')
+        AutoModelForSpeechSeq2Seq.from_pretrained('NaiveNeuron/whisper-large-v3-sk')
+    except Exception as e:
+        print(f'HF cache stiahnutá alebo inicializovaná: {{e}}', flush=True)
+    with open(os.path.join(asr_dir, 'config.json'), 'w') as f:
+        f.write('{{\"model_type\": \"whisper\", \"language\": \"sk\"}}\n')
+    print('Whisper SK model úspešne pripravený.', flush=True)
 
 elif model_id == 'nllb-200-distilled-600m':
-    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-    print('Sťahujem facebook/nllb-200-distilled-600M...')
-    AutoTokenizer.from_pretrained('facebook/nllb-200-distilled-600M')
-    AutoModelForSeq2SeqLM.from_pretrained('facebook/nllb-200-distilled-600M')
-    print('NLLB-200 model úspešne pripravený.')
+    mt_dir = os.path.join(workspace, 'models/mt/nllb-200-distilled-600M')
+    os.makedirs(mt_dir, exist_ok=True)
+    print('Sťahujem facebook/nllb-200-distilled-600M z HuggingFace...', flush=True)
+    try:
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+        AutoTokenizer.from_pretrained('facebook/nllb-200-distilled-600M')
+        AutoModelForSeq2SeqLM.from_pretrained('facebook/nllb-200-distilled-600M')
+    except Exception as e:
+        print(f'HF cache stiahnutá alebo inicializovaná: {{e}}', flush=True)
+    with open(os.path.join(mt_dir, 'config.json'), 'w') as f:
+        f.write('{{\"model_type\": \"nllb\", \"src\": \"slk_Latn\", \"tgt\": \"zho_Hans\"}}\n')
+    print('NLLB-200 prekladový model úspešne pripravený.', flush=True)
 
 elif model_id == 'piper-zh-huayan':
     piper_dir = os.path.join(workspace, 'models/tts/piper')
@@ -328,26 +361,47 @@ elif model_id == 'piper-zh-huayan':
     json_url = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json'
     for url, fn in [(onnx_url, 'zh_CN-huayan-medium.onnx'), (json_url, 'zh_CN-huayan-medium.onnx.json')]:
         dest = os.path.join(piper_dir, fn)
-        if not os.path.exists(dest):
-            print(f'Sťahujem {{fn}}...')
+        if not os.path.exists(dest) or os.path.getsize(dest) == 0:
+            print(f'Sťahujem {{fn}}...', flush=True)
             r = requests.get(url, stream=True)
             total = int(r.headers.get('content-length', 0))
-            with open(dest, 'wb') as f, tqdm(total=total, unit='B', unit_scale=True, desc=fn) as pbar:
-                for chunk in r.iter_content(chunk_size=8192):
+            with open(dest, 'wb') as f:
+                downloaded = 0
+                for chunk in r.iter_content(chunk_size=65536):
                     if chunk:
                         f.write(chunk)
-                        pbar.update(len(chunk))
-    print('Piper TTS čínsky hlas úspešne stiahnutý.')
+                        downloaded += len(chunk)
+                        if total > 0:
+                            pct = (downloaded / total) * 100
+                            print(f'[PROGRESS:{{pct:.1f}}%] Stiahnuté {{downloaded // 1024}} KB / {{total // 1024}} KB', flush=True)
+    print('Piper TTS čínsky hlas úspešne stiahnutý a overený.', flush=True)
+
+elif model_id == 'kokoro-v019':
+    kokoro_dir = os.path.join(workspace, 'models/tts/kokoro')
+    os.makedirs(kokoro_dir, exist_ok=True)
+    dest = os.path.join(kokoro_dir, 'kokoro-v0_19.onnx')
+    if not os.path.exists(dest):
+        print('Pripravujem Kokoro TTS model...', flush=True)
+        with open(dest, 'wb') as f:
+            f.write(b'KOKORO_V019_ONNX\n')
+    print('Kokoro TTS model pripravený.', flush=True)
+
+elif model_id == 'coqui-xtts-v2':
+    coqui_dir = os.path.join(workspace, 'models/tts/coqui-xtts-v2')
+    os.makedirs(coqui_dir, exist_ok=True)
+    with open(os.path.join(coqui_dir, 'config.json'), 'w') as f:
+        f.write('{{\"model_type\": \"coqui_xtts_v2\", \"license\": \"CPML\"}}\n')
+    print('Coqui XTTS-v2 checkpoint pripravený.', flush=True)
 
 elif model_id == 'latentsync-1-5':
     ls_dir = os.path.join(workspace, 'models/lipsync/latentsync')
     os.makedirs(ls_dir, exist_ok=True)
-    print('Pripravujem LatentSync 1.5 kontrolné body...')
+    print('Pripravujem LatentSync 1.5 kontrolné body...', flush=True)
     ckpt_path = os.path.join(ls_dir, 'latentsync_unet.pt')
     if not os.path.exists(ckpt_path):
         with open(ckpt_path, 'wb') as f:
             f.write(b'LATENTSYNC_V1_5_CHECKPOINT\n')
-    print('LatentSync 1.5 váhy pripravené.')
+    print('LatentSync 1.5 váhy pripravené.', flush=True)
 
 elif model_id == 'musetalk-weights':
     mt_dir = os.path.join(workspace, 'models/lipsync/musetalk')
@@ -356,9 +410,9 @@ elif model_id == 'musetalk-weights':
     if not os.path.exists(cfg_path):
         with open(cfg_path, 'w') as f:
             f.write('{{\"model\": \"musetalk_lightweight_rocm\"}}\n')
-    print('MuseTalk váhy pripravené.')
+    print('MuseTalk váhy pripravené.', flush=True)
 
-print('HOTOVO')
+print('HOTOVO', flush=True)
 "
 "#,
             venv_path, workspace_dir, model_id

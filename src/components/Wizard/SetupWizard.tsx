@@ -113,7 +113,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
           ...prev,
           {
             stream: 'system',
-            message: `✓ Krok ${i + 1}/${wizardSteps.length}: ${step.title} bol ÚSPEŠNE DOKONČENÝ.`,
+            message: `✓ [${new Date().toLocaleTimeString()}] Krok ${i + 1}/${wizardSteps.length}: ${step.title} bol ÚSPEŠNE DOKONČENÝ.`,
             timestamp_ms: Date.now(),
             is_progress: false,
             progress_percent: 100,
@@ -144,26 +144,65 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
 
   const handleFixSingleItem = async (itemId: string) => {
     setActiveTab('wizard_run');
-    setInstallerLogs([]);
     setIsRunningAll(true);
     setFailedStepIndex(null);
 
-    try {
-      const stepId = itemId.startsWith('model_')
-        ? itemId
-        : itemId.includes('wsl') || itemId.includes('distro')
-        ? 'wsl_install'
-        : itemId.includes('pkg')
-        ? 'system_packages'
-        : itemId.includes('python') || itemId.includes('torch')
-        ? 'python_rocm'
-        : itemId.includes('latentsync') || itemId.includes('musetalk')
-        ? 'lipsync_repos'
-        : itemId;
+    const stepId = itemId.startsWith('model_')
+      ? itemId
+      : itemId.includes('wsl') || itemId.includes('distro')
+      ? 'wsl_install'
+      : itemId.includes('pkg')
+      ? 'system_packages'
+      : itemId.includes('python') || itemId.includes('torch')
+      ? 'python_rocm'
+      : itemId.includes('latentsync') || itemId.includes('musetalk')
+      ? 'lipsync_repos'
+      : itemId;
 
-      await invokeCommand('run_wizard_step', { step_id: stepId });
-    } catch (err) {
+    const matchedStep = wizardSteps.find((s) => s.id === stepId);
+
+    setInstallerLogs((prev) => [
+      ...prev,
+      {
+        stream: 'system',
+        message: `>>> [${new Date().toLocaleTimeString()}] Spúšťam inštaláciu komponentu: ${matchedStep?.title || stepId}...`,
+        timestamp_ms: Date.now(),
+        is_progress: false,
+        progress_percent: null,
+        step_tag: stepId,
+      },
+    ]);
+
+    try {
+      const res = await invokeCommand<boolean>('run_wizard_step', { step_id: stepId });
+      if (!res) {
+        throw new Error(`Inštalácia komponentu '${stepId}' zlyhala.`);
+      }
+
+      setInstallerLogs((prev) => [
+        ...prev,
+        {
+          stream: 'system',
+          message: `✓ [${new Date().toLocaleTimeString()}] Komponent ${stepId} bol ÚSPEŠNE NAINŠTALOVANÝ.`,
+          timestamp_ms: Date.now(),
+          is_progress: false,
+          progress_percent: 100,
+          step_tag: stepId,
+        },
+      ]);
+    } catch (err: any) {
       console.error(err);
+      setInstallerLogs((prev) => [
+        ...prev,
+        {
+          stream: 'stderr',
+          message: `❌ CHYBA: ${err?.message || err}`,
+          timestamp_ms: Date.now(),
+          is_progress: false,
+          progress_percent: null,
+          step_tag: stepId,
+        },
+      ]);
     } finally {
       setIsRunningAll(false);
       await fetchDiagnostics();
@@ -172,13 +211,52 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
 
   const handleDownloadModel = async (modelId: string) => {
     setDownloadingModelId(modelId);
+    setActiveTab('wizard_run');
+    setIsRunningAll(true);
+
+    const stepId = `model_${modelId}`;
+    setInstallerLogs((prev) => [
+      ...prev,
+      {
+        stream: 'system',
+        message: `>>> [${new Date().toLocaleTimeString()}] Začínam sťahovanie AI modelu: ${modelId}...`,
+        timestamp_ms: Date.now(),
+        is_progress: false,
+        progress_percent: null,
+        step_tag: stepId,
+      },
+    ]);
+
     try {
-      await invokeCommand('run_wizard_step', { step_id: `model_${modelId}` });
+      await invokeCommand('run_wizard_step', { step_id: stepId });
+      setInstallerLogs((prev) => [
+        ...prev,
+        {
+          stream: 'system',
+          message: `✓ [${new Date().toLocaleTimeString()}] Model ${modelId} bol ÚSPEŠNE STIAHNUTÝ A PRIPRAVENÝ.`,
+          timestamp_ms: Date.now(),
+          is_progress: false,
+          progress_percent: 100,
+          step_tag: stepId,
+        },
+      ]);
       await fetchDiagnostics();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setInstallerLogs((prev) => [
+        ...prev,
+        {
+          stream: 'stderr',
+          message: `❌ CHYBA pri sťahovaní modelu ${modelId}: ${err?.message || err}`,
+          timestamp_ms: Date.now(),
+          is_progress: false,
+          progress_percent: null,
+          step_tag: stepId,
+        },
+      ]);
     } finally {
       setDownloadingModelId(null);
+      setIsRunningAll(false);
     }
   };
 
