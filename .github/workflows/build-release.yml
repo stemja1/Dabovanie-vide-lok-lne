@@ -46,18 +46,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v1.1.2
-          releaseName: "AI Dabing Štúdio v1.1.2 (Pre-built Windows App)"
+          tagName: ${{ github.ref_name }}
+          releaseName: "AI Dabing Štúdio ${{ github.ref_name }} (Pre-built Windows App)"
           releaseBody: |
             ## 🚀 Predkompilovaná verzia AI Dabing Štúdio pre Windows 11
             
             Stiahnite si inštalátor `.msi` alebo `.exe` a dvakrát naň kliknite:
-            - **AI Dabing Studio_0.1.0_x64_en-US.msi** (Windows inštalátor)
-            - **ai-dubbing-orchestrator.exe** (Samostatný spustiteľný program)
+            - **Inštalátor MSI:** `Slovak-to-Chinese AI Dubbing Orchestrator_0.1.0_x64_en-US.msi`
+            - **Samostatný EXE súbor:** `Slovak-to-Chinese AI Dubbing Orchestrator.exe`
             
             ### Požiadavky:
             - Windows 11 s WSL2 (Ubuntu 24.04)
-            - AMD Radeon RX 7700 XT (alebo ľubovoľná AMD/NVIDIA grafická karta)
+            - AMD Radeon RX 7700 XT (alebo ľubovoľná AMD/NVIDIA grafická karta / CPU)
+            - Vstavaný sprievodca jedným kliknutím nainštaluje všetky AI modely do WSL2.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
