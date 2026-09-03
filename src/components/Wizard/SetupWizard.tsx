@@ -13,6 +13,8 @@ import {
   Copy,
   Check,
   RotateCcw,
+  Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 import { SystemDiagnosticsReport, ModelManifestItem } from '../../types/wizard';
 import { ProcessLogLine } from '../../types/pipeline';
@@ -36,6 +38,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
 
   // Automated installer run state
   const [isRunningAll, setIsRunningAll] = useState<boolean>(false);
+  const [isCompletedAll, setIsCompletedAll] = useState<boolean>(false);
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [failedStepIndex, setFailedStepIndex] = useState<number | null>(null);
   const [installerLogs, setInstallerLogs] = useState<ProcessLogLine[]>([]);
@@ -61,6 +64,9 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
       setReport(rep);
       const mList = await invokeCommand<ModelManifestItem[]>('get_models_manifest');
       setModels(mList);
+      if (rep.all_ok) {
+        setIsCompletedAll(true);
+      }
     } catch (err) {
       console.error('Failed to run diagnostics', err);
     } finally {
@@ -82,12 +88,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
 
   const handleRunAllSteps = async (startFromIndex: number = 0) => {
     setIsRunningAll(true);
+    setIsCompletedAll(false);
     setFailedStepIndex(null);
     setActiveTab('wizard_run');
     if (startFromIndex === 0) {
       setInstallerLogs([]);
     }
 
+    let hasError = false;
     for (let i = startFromIndex; i < wizardSteps.length; i++) {
       setCurrentStepIndex(i);
       const step = wizardSteps[i];
@@ -123,6 +131,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
       } catch (err: any) {
         console.error(`Step ${step.id} failed`, err);
         setFailedStepIndex(i);
+        hasError = true;
         setInstallerLogs((prev) => [
           ...prev,
           {
@@ -139,6 +148,20 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
     }
 
     setIsRunningAll(false);
+    if (!hasError) {
+      setIsCompletedAll(true);
+      setInstallerLogs((prev) => [
+        ...prev,
+        {
+          stream: 'system',
+          message: `🎉 [${new Date().toLocaleTimeString()}] VŠETKY KROKY INŠTALÁCIE BOLI ÚSPEŠNE DOKONČENÉ (100%)! Systém je pripravený.`,
+          timestamp_ms: Date.now(),
+          is_progress: false,
+          progress_percent: 100,
+          step_tag: 'done',
+        },
+      ]);
+    }
     await fetchDiagnostics();
   };
 
@@ -275,6 +298,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
     report?.items.filter((i) => i.is_installed).map((i) => i.id) || []
   );
 
+  const calculatedProgress = isCompletedAll
+    ? 100
+    : isRunningAll
+    ? Math.min(95, ((currentStepIndex + 0.5) / wizardSteps.length) * 100)
+    : failedStepIndex !== null
+    ? (failedStepIndex / wizardSteps.length) * 100
+    : 0;
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-12">
       {/* Header bar */}
@@ -299,6 +330,15 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
               onClick={handleCancel}
             >
               Zrušiť inštaláciu
+            </Button>
+          ) : isCompletedAll ? (
+            <Button
+              variant="success"
+              size="sm"
+              leftIcon={<CheckCircle2 className="w-3.5 h-3.5" />}
+              onClick={() => handleRunAllSteps(0)}
+            >
+              ✓ Pripravené (Znovu overiť)
             </Button>
           ) : (
             <Button
@@ -379,19 +419,33 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
         <div className="space-y-5">
           {/* Progress Overview */}
           <Card className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h4 className="font-semibold text-sm text-slate-200">
-                  {isRunningAll
-                    ? `Vykonávam krok ${currentStepIndex + 1}/${wizardSteps.length}: ${wizardSteps[currentStepIndex]?.title}`
-                    : failedStepIndex !== null
-                    ? `Inštalácia sa zastavila na kroku ${failedStepIndex + 1}: ${wizardSteps[failedStepIndex]?.title}`
-                    : 'Inštalácia pripravená'}
+                <h4 className="font-bold text-sm text-slate-100 flex items-center gap-2">
+                  {isCompletedAll ? (
+                    <>
+                      <Sparkles className="w-4 h-4 text-emerald-400" />
+                      <span>Inštalácia 100% dokončená a pripravená!</span>
+                    </>
+                  ) : isRunningAll ? (
+                    <span>Vykonávam krok {currentStepIndex + 1}/{wizardSteps.length}: {wizardSteps[currentStepIndex]?.title}</span>
+                  ) : failedStepIndex !== null ? (
+                    <span className="text-rose-400">Inštalácia sa zastavila na kroku {failedStepIndex + 1}: {wizardSteps[failedStepIndex]?.title}</span>
+                  ) : (
+                    <span>Inštalácia pripravená na spustenie</span>
+                  )}
                 </h4>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {wizardSteps[currentStepIndex]?.desc || 'Vyberte akciu alebo spustite celú inštaláciu.'}
+                <p className="text-xs text-slate-400 mt-1">
+                  {isCompletedAll
+                    ? 'Všetky potrebné AI modely a ROCm knižnice sú pripravené v prostredí Ubuntu WSL2.'
+                    : isRunningAll
+                    ? wizardSteps[currentStepIndex]?.desc
+                    : failedStepIndex !== null
+                    ? 'Kliknite na tlačidlo "Opakovať krok" nižšie alebo skontrolujte chybové hlásenie v logu.'
+                    : 'Kliknite na tlačidlo "Spustiť inštaláciu" pre stiahnutie modelov.'}
                 </p>
               </div>
+
               <div className="flex items-center gap-2">
                 {failedStepIndex !== null && !isRunningAll && (
                   <Button
@@ -403,15 +457,35 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
                     Opakovať od kroku {failedStepIndex + 1}
                   </Button>
                 )}
-                <Badge variant={isRunningAll ? 'primary' : failedStepIndex !== null ? 'danger' : 'secondary'}>
-                  {isRunningAll ? 'Inštaluje sa...' : failedStepIndex !== null ? 'Zlyhané' : 'Neaktívne'}
-                </Badge>
+
+                {isCompletedAll ? (
+                  <Badge variant="success" size="md" icon={<CheckCircle2 className="w-3.5 h-3.5" />}>
+                    100% Hotovo
+                  </Badge>
+                ) : isRunningAll ? (
+                  <Badge variant="primary" size="md" icon={<RefreshCw className="w-3.5 h-3.5 animate-spin" />}>
+                    Inštaluje sa...
+                  </Badge>
+                ) : failedStepIndex !== null ? (
+                  <Badge variant="danger" size="md">
+                    Zlyhané
+                  </Badge>
+                ) : (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    leftIcon={<Play className="w-3.5 h-3.5" />}
+                    onClick={() => handleRunAllSteps(0)}
+                  >
+                    Spustiť inštaláciu
+                  </Button>
+                )}
               </div>
             </div>
 
             <ProgressBar
-              progress={((currentStepIndex + (isRunningAll ? 0.5 : 0)) / wizardSteps.length) * 100}
-              variant="gradient"
+              progress={calculatedProgress}
+              variant={isCompletedAll ? 'success' : 'gradient'}
               showLabel
             />
           </Card>
@@ -419,7 +493,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
           {/* Terminal Logs */}
           <Card className="p-0 overflow-hidden bg-slate-950 border-slate-800">
             <div className="px-4 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
-              <span className="text-xs font-mono text-slate-400">Live Inštalačný Log</span>
+              <span className="text-xs font-mono text-slate-400">Živý Inštalačný Záznam (Live Log)</span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -433,7 +507,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
             <div className="p-4 h-80 overflow-y-auto font-mono text-xs text-slate-300 space-y-1 custom-scrollbar">
               {installerLogs.length === 0 ? (
                 <div className="text-slate-600 text-center py-16">
-                  Žiadne logy. Kliknite na "Automaticky nainštalovať všetko" alebo vyberte komponent na inštaláciu.
+                  Žiadne logy. Kliknite na "Automaticky nainštalovať všetko" alebo vyberte modul na inštaláciu.
                 </div>
               ) : (
                 installerLogs.map((log, idx) => (
