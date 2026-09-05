@@ -1,4 +1,5 @@
 use crate::wsl::executor::{ProcessLogLine, WslExecutor};
+use crate::wsl::path_mapper::PathMapper;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,9 +65,18 @@ impl WizardInstaller {
         {
             use std::os::windows::process::CommandExt;
 
+            // `distro` is user-editable AppConfig data (`wsl_distro`), embedded here
+            // inside a PowerShell string. PowerShell only needs `'` doubled to stay
+            // inert, but an unescaped value could otherwise break out of
+            // `-ArgumentList '...'` and inject further commands into the
+            // surrounding `-Command` script — the same bug class as bod A for bash.
+            // The concatenation is wrapped in `(...)` to force PowerShell expression
+            // -mode parsing; without it, `-ArgumentList 'a' + 'b'` in command mode
+            // would pass `+` as a separate literal argument instead of concatenating.
+            let distro_ps = PathMapper::escape_powershell_arg(distro);
             let ps_script = format!(
-                r#"Start-Process wsl.exe -ArgumentList '--install -d {0} --no-launch' -Verb RunAs -Wait"#,
-                distro
+                r#"Start-Process wsl.exe -ArgumentList ('--install -d ' + {0} + ' --no-launch') -Verb RunAs -Wait"#,
+                distro_ps
             );
 
             if let Some(ref tx) = log_tx {
@@ -189,11 +199,17 @@ echo ">>> Systémové balíky úspešne nainštalované."
             return Ok(false);
         }
 
+        // `venv_path`/`workspace_dir` are user-editable AppConfig data — escape them
+        // with `PathMapper::escape_bash_arg` before splicing into the shell script.
+        // A bare `VENV="{0}"` would still let bash expand `$(...)`/backticks
+        // embedded in the config value.
+        let venv_q = PathMapper::escape_bash_arg(venv_path);
+        let workspace_q = PathMapper::escape_bash_arg(workspace_dir);
         let cmd = format!(
             r#"
 export PYTHONUNBUFFERED=1
-VENV="{0}"
-WORKSPACE="{1}"
+VENV={0}
+WORKSPACE={1}
 VENV="${{VENV/#\~/$HOME}}"
 WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
 
@@ -228,7 +244,7 @@ for cand in /mnt/c/Dabovanie-vide-lok-lne-main/scripts /mnt/c/*/Dabovanie-vide-l
 done
 echo ">>> Python & ROCm prostredie je úspešne nakonfigurované."
 "#,
-            venv_path, workspace_dir
+            venv_q, workspace_q
         );
 
         let res = WslExecutor::run_streaming_command(
@@ -254,11 +270,13 @@ echo ">>> Python & ROCm prostredie je úspešne nakonfigurované."
             return Ok(false);
         }
 
+        let venv_q = PathMapper::escape_bash_arg(venv_path);
+        let workspace_q = PathMapper::escape_bash_arg(workspace_dir);
         let cmd = format!(
             r#"
 export PYTHONUNBUFFERED=1
-VENV="{0}"
-WORKSPACE="{1}"
+VENV={0}
+WORKSPACE={1}
 VENV="${{VENV/#\~/$HOME}}"
 WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
 
@@ -286,7 +304,7 @@ if [ ! -d "$WORKSPACE/musetalk" ]; then
 fi
 echo ">>> AI Repozitáre pre lip-sync sú úspešne pripravené."
 "#,
-            venv_path, workspace_dir
+            venv_q, workspace_q
         );
 
         let res = WslExecutor::run_streaming_command(
@@ -313,13 +331,27 @@ echo ">>> AI Repozitáre pre lip-sync sú úspešne pripravené."
             return Ok(false);
         }
 
+        // `venv_path`/`workspace_dir` are user-editable AppConfig data. Two
+        // precautions here, not just one:
+        //   1. Escape them with `escape_bash_arg` before the `VENV=...`/`WORKSPACE=...`
+        //      bash assignment (a bare double-quoted `"{0}"` would still let bash
+        //      expand `$(...)`/backticks embedded in the value).
+        //   2. `export WORKSPACE` and read it back inside the embedded Python script
+        //      via `os.environ['WORKSPACE']` instead of re-interpolating the raw
+        //      value a second time as a Python string literal (`'{1}'`). The whole
+        //      `"$PY" -c "..."` script sits inside a bash *double-quoted* string, so
+        //      a second raw substitution there would reopen the exact same
+        //      injection vector one level down, even with the bash variable fixed.
+        let venv_q = PathMapper::escape_bash_arg(venv_path);
+        let workspace_q = PathMapper::escape_bash_arg(workspace_dir);
         let py_downloader = format!(
             r#"
 export PYTHONUNBUFFERED=1
-VENV="{0}"
-WORKSPACE="{1}"
+VENV={0}
+WORKSPACE={1}
 VENV="${{VENV/#\~/$HOME}}"
 WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
+export WORKSPACE
 
 PY="$VENV/bin/python"
 if [ ! -f "$PY" ]; then
@@ -331,7 +363,7 @@ import os, sys, requests, shutil
 
 sys.stdout.reconfigure(line_buffering=True)
 model_id = '{2}'
-workspace = os.path.expanduser('{1}')
+workspace = os.path.expanduser(os.environ['WORKSPACE'])
 target_dir = os.path.join(workspace, 'models')
 os.makedirs(target_dir, exist_ok=True)
 
@@ -465,7 +497,7 @@ elif model_id == 'musetalk-weights':
 print('HOTOVO', flush=True)
 "
 "#,
-            venv_path, workspace_dir, model_id
+            venv_q, workspace_q, model_id
         );
 
         let res = WslExecutor::run_streaming_command(

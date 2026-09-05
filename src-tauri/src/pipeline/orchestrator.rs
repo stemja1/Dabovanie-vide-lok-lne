@@ -69,10 +69,12 @@ impl PipelineOrchestrator {
 
     /// Ensures all Python pipeline scripts are present in the WSL workspace directory
     pub async fn ensure_scripts_synced(distro: &str, workspace_dir: &str) {
-        let ws = workspace_dir.trim_end_matches('/');
+        // `workspace_dir` is user-editable AppConfig data — always escape it before
+        // splicing into a shell command (see `PathMapper::escape_bash_arg`).
+        let ws = PathMapper::escape_bash_arg(workspace_dir.trim_end_matches('/'));
         let cmd = format!(
             r#"
-WORKSPACE="{0}"
+WORKSPACE={0}
 WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
 mkdir -p "$WORKSPACE/scripts"
 if [ ! -f "$WORKSPACE/scripts/stage_1_demux.py" ]; then
@@ -455,15 +457,20 @@ fi
         meta_wsl: &str,
         config: &AppConfig,
     ) -> String {
-        let venv_normalized = config.venv_path.trim_end_matches('/');
-        let ws_normalized = config.workspace_dir.trim_end_matches('/');
+        // `venv_path`/`workspace_dir` are user-editable AppConfig data — escape them
+        // the same way as `input_wsl`/`output_wsl`/`meta_wsl` below. A bare
+        // `VENV="{0}"` (double-quoted) would still let bash expand `$(...)` /
+        // backticks embedded in the config value.
+        let venv_normalized = PathMapper::escape_bash_arg(config.venv_path.trim_end_matches('/'));
+        let ws_normalized =
+            PathMapper::escape_bash_arg(config.workspace_dir.trim_end_matches('/'));
 
         let q_in = PathMapper::escape_bash_arg(input_wsl);
         let q_out = PathMapper::escape_bash_arg(output_wsl);
         let q_meta = PathMapper::escape_bash_arg(meta_wsl);
 
         let setup_env = format!(
-            r#"VENV="{0}"; WORKSPACE="{1}"; VENV="${{VENV/#\~/$HOME}}"; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; PYTHON_BIN="$VENV/bin/python"; SCRIPT_DIR="$WORKSPACE/scripts"; "#,
+            r#"VENV={0}; WORKSPACE={1}; VENV="${{VENV/#\~/$HOME}}"; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; PYTHON_BIN="$VENV/bin/python"; SCRIPT_DIR="$WORKSPACE/scripts"; "#,
             venv_normalized, ws_normalized
         );
 

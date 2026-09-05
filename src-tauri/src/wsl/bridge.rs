@@ -111,9 +111,16 @@ impl WslBridge {
 
     /// Checks ROCm and PyTorch HIP status inside the target WSL distro.
     pub async fn check_rocm_status(distro: &str, venv_path: &str) -> Result<RocmStatusInfo> {
-        let venv_clean = venv_path.trim_end_matches('/');
+        // `venv_path` comes from user-editable AppConfig (settable via `save_config` /
+        // `import_config_toml`), so it MUST be safely quoted before it is spliced into
+        // a bash command string. `VENV="{0}"` (double quotes) would still let bash
+        // evaluate `$(...)`/backticks embedded in the value; `escape_bash_arg` wraps it
+        // in single quotes, which bash never expands, closing that injection vector.
+        let venv_clean = crate::wsl::path_mapper::PathMapper::escape_bash_arg(
+            venv_path.trim_end_matches('/'),
+        );
         let test_script = format!(
-            r#"VENV="{0}"; VENV="${{VENV/#\~/$HOME}}"; test -f "$VENV/bin/python" && "$VENV/bin/python" -c "
+            r#"VENV={0}; VENV="${{VENV/#\~/$HOME}}"; test -f "$VENV/bin/python" && "$VENV/bin/python" -c "
 import sys, json
 info = {{'rocm_available': False, 'rocm_version': None, 'gpu_name': None, 'total_vram_mb': 0, 'free_vram_mb': 0, 'hip': False}}
 try:

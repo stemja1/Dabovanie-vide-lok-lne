@@ -71,6 +71,16 @@ impl PathMapper {
         format!("'{}'", arg.replace('\'', "'\\''"))
     }
 
+    /// Safely escapes an argument for single-quoted PowerShell execution.
+    /// PowerShell single-quoted strings only need an embedded `'` doubled to `''`;
+    /// unlike bash double quotes, PowerShell single-quoted strings do not expand
+    /// `$(...)`, but an unescaped `'` still lets the value break out of its quoting
+    /// and inject further script text into the surrounding `-Command` string.
+    /// E.g. `Ubuntu'; iex evil` -> `Ubuntu''; iex evil` (stays inert inside `'...'`)
+    pub fn escape_powershell_arg(arg: &str) -> String {
+        format!("'{}'", arg.replace('\'', "''"))
+    }
+
     /// Expands "~" with WSL home path in script paths
     pub fn expand_wsl_home(path: &str, wsl_user: Option<&str>) -> String {
         if path.starts_with('~') {

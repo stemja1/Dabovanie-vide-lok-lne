@@ -178,9 +178,17 @@ dpkg -l | grep -q libsndfile1 && echo "SNDFILE_OK" || echo "SNDFILE_MISSING";
         });
 
         // 3. Check Python venv and PyTorch ROCm
-        let venv_clean = venv_path.trim_end_matches('/');
+        //
+        // `venv_path` is user-editable AppConfig data, so it is passed through
+        // `escape_bash_arg` before being spliced into the shell command below —
+        // never interpolate it as a bare `"{0}"` (double-quoted) value, since bash
+        // still expands `$(...)` / backticks inside double quotes. See
+        // `PathMapper::escape_bash_arg` and `tests/test_security_escaping.rs`.
+        let venv_clean = crate::wsl::path_mapper::PathMapper::escape_bash_arg(
+            venv_path.trim_end_matches('/'),
+        );
         let check_py_cmd = format!(
-            r#"VENV="{0}"; VENV="${{VENV/#\~/$HOME}}"; test -f "$VENV/bin/python" && "$VENV/bin/python" -c "
+            r#"VENV={0}; VENV="${{VENV/#\~/$HOME}}"; test -f "$VENV/bin/python" && "$VENV/bin/python" -c "
 import sys
 try:
     import torch
@@ -264,9 +272,12 @@ except Exception as e:
         });
 
         // 4. Check Repositories (LatentSync 1.5 and MuseTalk)
-        let ws_clean = workspace_dir.trim_end_matches('/');
+        // Same rationale as `venv_clean` above: `workspace_dir` is user-editable, so
+        // it must go through `escape_bash_arg`, not a bare double-quoted `"{0}"`.
+        let ws_clean =
+            crate::wsl::path_mapper::PathMapper::escape_bash_arg(workspace_dir.trim_end_matches('/'));
         let check_repos_cmd = format!(
-            r#"WORKSPACE="{0}"; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; test -d "$WORKSPACE/latentsync" && echo "LATENTSYNC_OK" || echo "LATENTSYNC_MISSING"; test -d "$WORKSPACE/musetalk" && echo "MUSETALK_OK" || echo "MUSETALK_MISSING";"#,
+            r#"WORKSPACE={0}; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; test -d "$WORKSPACE/latentsync" && echo "LATENTSYNC_OK" || echo "LATENTSYNC_MISSING"; test -d "$WORKSPACE/musetalk" && echo "MUSETALK_OK" || echo "MUSETALK_MISSING";"#,
             ws_clean
         );
         let repo_res = WslExecutor::run_command_output(distro, &check_repos_cmd).await;
@@ -324,8 +335,11 @@ except Exception as e:
         // 5. Check Models
         let all_models = ModelsManifest::get_all_models();
         for model in all_models {
+            // `ws_clean` is already safely quoted above; `model.local_relative_path`
+            // is static data from `ModelsManifest` (not user input), so it is safe
+            // to interpolate directly here.
             let check_model_cmd = format!(
-                r#"WORKSPACE="{0}"; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; test -e "$WORKSPACE/{1}" && echo 'MODEL_OK' || echo 'MODEL_MISSING'"#,
+                r#"WORKSPACE={0}; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; test -e "$WORKSPACE/{1}" && echo 'MODEL_OK' || echo 'MODEL_MISSING'"#,
                 ws_clean, model.local_relative_path
             );
             let m_res = WslExecutor::run_command_output(distro, &check_model_cmd).await;
