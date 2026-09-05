@@ -235,7 +235,7 @@ echo ">>> Python & ROCm prostredie je úspešne nakonfigurované."
             distro,
             &cmd,
             log_tx,
-            Some(std::time::Duration::from_secs(1800)),
+            Some(std::time::Duration::from_secs(3600)),
             Some(self.is_cancelled.clone()),
         )
         .await?;
@@ -410,35 +410,56 @@ elif model_id == 'piper-zh-huayan':
 elif model_id == 'kokoro-v019':
     kokoro_dir = os.path.join(workspace, 'models/tts/kokoro')
     os.makedirs(kokoro_dir, exist_ok=True)
-    dest = os.path.join(kokoro_dir, 'kokoro-v0_19.onnx')
-    if not os.path.exists(dest):
-        with open(dest, 'wb') as f:
-            f.write(b'KOKORO_V019_ONNX\n')
+    download_file_with_progress(
+        'https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v0_19.onnx',
+        os.path.join(kokoro_dir, 'kokoro-v0_19.onnx'),
+        'kokoro-v0_19.onnx (Kokoro TTS)'
+    )
     print('✓ Kokoro TTS model je pripravený.', flush=True)
 
 elif model_id == 'coqui-xtts-v2':
     coqui_dir = os.path.join(workspace, 'models/tts/coqui-xtts-v2')
     os.makedirs(coqui_dir, exist_ok=True)
-    with open(os.path.join(coqui_dir, 'config.json'), 'w') as f:
-        f.write('{{\"model_type\": \"coqui_xtts_v2\", \"license\": \"CPML\"}}\n')
+    print('Sťahujem coqui/XTTS-v2 (viacjazyčný TTS s klonovaním hlasu, licencia CPML)...', flush=True)
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(repo_id='coqui/XTTS-v2', local_dir=coqui_dir, max_workers=4)
+        print('✓ Coqui XTTS-v2 checkpoint stiahnutý cez HuggingFace Hub.', flush=True)
+    except Exception as e:
+        print(f'Skúšam priame sťahovanie konfigurácie Coqui XTTS-v2: {{e}}', flush=True)
+        download_file_with_progress(
+            'https://huggingface.co/coqui/XTTS-v2/resolve/main/config.json',
+            os.path.join(coqui_dir, 'config.json'),
+            'coqui_xtts_v2_config.json'
+        )
     print('✓ Coqui XTTS-v2 checkpoint je pripravený.', flush=True)
 
 elif model_id == 'latentsync-1-5':
     ls_dir = os.path.join(workspace, 'models/lipsync/latentsync')
     os.makedirs(ls_dir, exist_ok=True)
-    ckpt_path = os.path.join(ls_dir, 'latentsync_unet.pt')
-    if not os.path.exists(ckpt_path):
-        with open(ckpt_path, 'wb') as f:
-            f.write(b'LATENTSYNC_V1_5_CHECKPOINT\n')
+    download_file_with_progress(
+        'https://huggingface.co/ByteDance/LatentSync/resolve/main/latentsync_unet.pt',
+        os.path.join(ls_dir, 'latentsync_unet.pt'),
+        'latentsync_unet.pt (LatentSync 1.5 UNet)'
+    )
     print('✓ LatentSync 1.5 váhy sú pripravené.', flush=True)
 
 elif model_id == 'musetalk-weights':
     mt_dir = os.path.join(workspace, 'models/lipsync/musetalk')
     os.makedirs(mt_dir, exist_ok=True)
-    cfg_path = os.path.join(mt_dir, 'musetalk.json')
-    if not os.path.exists(cfg_path):
-        with open(cfg_path, 'w') as f:
-            f.write('{{\"model\": \"musetalk_lightweight_rocm\"}}\n')
+    print('Sťahujem TMElyralab/MuseTalk (odľahčený fallback lip-sync model)...', flush=True)
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(
+            repo_id='TMElyralab/MuseTalk',
+            local_dir=os.path.dirname(mt_dir.rstrip('/')),
+            allow_patterns=['musetalk/*'],
+            max_workers=4,
+        )
+        print('✓ MuseTalk váhy stiahnuté cez HuggingFace Hub.', flush=True)
+    except Exception as e:
+        print(f'Chyba pri sťahovaní MuseTalk cez HuggingFace Hub: {{e}}', flush=True)
+        raise
     print('✓ MuseTalk váhy sú pripravené.', flush=True)
 
 print('HOTOVO', flush=True)
@@ -451,7 +472,7 @@ print('HOTOVO', flush=True)
             distro,
             &py_downloader,
             log_tx,
-            Some(std::time::Duration::from_secs(1800)),
+            Some(std::time::Duration::from_secs(3600)),
             Some(self.is_cancelled.clone()),
         )
         .await?;

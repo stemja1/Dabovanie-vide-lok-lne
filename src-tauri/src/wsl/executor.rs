@@ -4,7 +4,7 @@ use std::process::{Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
@@ -170,51 +170,18 @@ impl WslExecutor {
             .take()
             .ok_or_else(|| anyhow::anyhow!("Nepodarilo sa zachytiť stderr procesu"))?;
 
-        let mut stdout_reader = BufReader::new(stdout).lines();
-        let mut stderr_reader = BufReader::new(stderr).lines();
-
         let sender_stdout = log_sender.clone();
         let sender_stderr = log_sender.clone();
 
-        let stdout_task = tokio::spawn(async move {
-            let mut collected: Vec<String> = Vec::new();
-            while let Ok(Some(line)) = stdout_reader.next_line().await {
-                let parsed_progress = Self::parse_progress_line(&line);
-                if let Some(ref tx) = sender_stdout {
-                    let log = ProcessLogLine {
-                        stream: "stdout".to_string(),
-                        message: line.clone(),
-                        timestamp_ms: chrono::Utc::now().timestamp_millis(),
-                        is_progress: parsed_progress.is_some(),
-                        progress_percent: parsed_progress,
-                        step_tag: None,
-                    };
-                    let _ = tx.send(log);
-                }
-                collected.push(line);
-            }
-            collected
-        });
+        let stdout_task =
+            tokio::spawn(
+                async move { Self::stream_lines(stdout, "stdout", sender_stdout).await },
+            );
 
-        let stderr_task = tokio::spawn(async move {
-            let mut collected: Vec<String> = Vec::new();
-            while let Ok(Some(line)) = stderr_reader.next_line().await {
-                let parsed_progress = Self::parse_progress_line(&line);
-                if let Some(ref tx) = sender_stderr {
-                    let log = ProcessLogLine {
-                        stream: "stderr".to_string(),
-                        message: line.clone(),
-                        timestamp_ms: chrono::Utc::now().timestamp_millis(),
-                        is_progress: parsed_progress.is_some(),
-                        progress_percent: parsed_progress,
-                        step_tag: None,
-                    };
-                    let _ = tx.send(log);
-                }
-                collected.push(line);
-            }
-            collected
-        });
+        let stderr_task =
+            tokio::spawn(
+                async move { Self::stream_lines(stderr, "stderr", sender_stderr).await },
+            );
 
         // Polling loop to support both timeout and immediate cancellation
         let poll_interval = Duration::from_millis(100);
@@ -310,6 +277,95 @@ impl WslExecutor {
             error_kind,
             user_remedy: remedy,
         })
+    }
+
+    /// Streams raw process output and splits it into "lines" on both `\n` and bare `\r`.
+    ///
+    /// Rationale: tools like `pip` and `huggingface_hub`/`tqdm` redraw their progress
+    /// bar in-place using a carriage return (`\r`) instead of a newline. A reader that
+    /// only splits on `\n` (e.g. `BufReader::lines()`) never sees those intermediate
+    /// updates — it blocks until the *next* real newline appears, which for a multi-GB
+    /// download can be minutes away. From the UI's perspective this looks exactly like
+    /// the process being stuck at 0%, even though it is downloading correctly in the
+    /// background. Treating `\r` as a line boundary too makes every progress-bar
+    /// redraw visible as soon as it happens.
+    async fn stream_lines<R>(
+        mut reader: R,
+        stream_name: &'static str,
+        sender: Option<mpsc::UnboundedSender<ProcessLogLine>>,
+    ) -> Vec<String>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        let mut collected: Vec<String> = Vec::new();
+        let mut line_buf: Vec<u8> = Vec::new();
+        let mut read_buf = [0u8; 8192];
+        let mut last_was_cr = false;
+
+        loop {
+            let n = match reader.read(&mut read_buf).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => break,
+            };
+
+            for &byte in &read_buf[..n] {
+                match byte {
+                    b'\n' => {
+                        // Treat CRLF as a single boundary (already flushed on the \r).
+                        if last_was_cr {
+                            last_was_cr = false;
+                            continue;
+                        }
+                        Self::emit_line(&mut line_buf, stream_name, &sender, &mut collected);
+                        last_was_cr = false;
+                    }
+                    b'\r' => {
+                        Self::emit_line(&mut line_buf, stream_name, &sender, &mut collected);
+                        last_was_cr = true;
+                    }
+                    _ => {
+                        line_buf.push(byte);
+                        last_was_cr = false;
+                    }
+                }
+            }
+        }
+
+        if !line_buf.is_empty() {
+            Self::emit_line(&mut line_buf, stream_name, &sender, &mut collected);
+        }
+
+        collected
+    }
+
+    /// Flushes the accumulated line buffer as a single `ProcessLogLine`, parses it for
+    /// an embedded progress percentage, and forwards it to the frontend channel.
+    fn emit_line(
+        line_buf: &mut Vec<u8>,
+        stream_name: &str,
+        sender: &Option<mpsc::UnboundedSender<ProcessLogLine>>,
+        collected: &mut Vec<String>,
+    ) {
+        if line_buf.is_empty() {
+            return;
+        }
+        let line = String::from_utf8_lossy(line_buf).to_string();
+        line_buf.clear();
+
+        let parsed_progress = Self::parse_progress_line(&line);
+        if let Some(tx) = sender {
+            let log = ProcessLogLine {
+                stream: stream_name.to_string(),
+                message: line.clone(),
+                timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                is_progress: parsed_progress.is_some(),
+                progress_percent: parsed_progress,
+                step_tag: None,
+            };
+            let _ = tx.send(log);
+        }
+        collected.push(line);
     }
 
     /// Extracts numerical percentage from progress bars (e.g. `[PROGRESS:45.5%]` or `45%|...`)

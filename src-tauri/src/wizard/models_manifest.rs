@@ -127,10 +127,11 @@ impl ModelsManifest {
                 description: "Odľahčený lip-sync model s nízkou spotrebou (~4.5 GB VRAM) — ideálny fallback pri OOM alebo rýchlom režime.".to_string(),
                 license: "MIT".to_string(),
                 is_commercial_safe: true,
-                approximate_size_mb: 2200,
+                approximate_size_mb: 3400,
                 local_relative_path: "models/lipsync/musetalk/musetalk.json".to_string(),
                 download_urls: vec![
-                    "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/musetalk.json".to_string(),
+                    "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/musetalk/musetalk.json".to_string(),
+                    "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/musetalk/pytorch_model.bin".to_string(),
                 ],
                 expected_sha256: None,
                 is_required_for_mvp: true,
