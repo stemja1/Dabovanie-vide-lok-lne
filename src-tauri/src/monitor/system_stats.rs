@@ -55,10 +55,20 @@ impl SystemStatsMonitor {
 
         let cpu_pct = sys.global_cpu_usage();
 
-        // GPU metrics for AMD RX 7700 XT (12 GB = 12288 MB)
-        let gpu_vram_total_mb = 12288u64;
-        let gpu_vram_used_mb = 1840u64; // baseline desktop / driver usage
-        let gpu_vram_percent = (gpu_vram_used_mb as f32 / gpu_vram_total_mb as f32) * 100.0;
+        // Honest placeholder: this fast host-side poll (called every 3s from the
+        // frontend) has no cheap way to query live AMD/ROCm VRAM usage — that
+        // requires a round-trip into WSL (see `WslBridge::check_rocm_status`,
+        // which queries `torch.cuda.mem_get_info()` for real numbers). This used
+        // to hardcode a specific GPU model and a plausible-looking VRAM baseline
+        // (12288 / 1840 MB) regardless of the user's actual hardware, which
+        // silently misrepresented every machine that isn't the developer's own.
+        // Reporting 0/"Neznáme" here is honestly "not measured", not "measured
+        // zero" — `is_rocm_ready` stays `false` until a real ROCm check confirms
+        // it. Prefer wiring the frontend to `check_rocm_status` (on a slower
+        // interval, since it shells out to WSL) over inventing numbers here.
+        let gpu_vram_total_mb = 0u64;
+        let gpu_vram_used_mb = 0u64;
+        let gpu_vram_percent = 0.0f32;
 
         LiveSystemMetrics {
             host_ram_used_mb: used_ram_mb,
@@ -68,8 +78,8 @@ impl SystemStatsMonitor {
             gpu_vram_used_mb,
             gpu_vram_total_mb,
             gpu_vram_percent,
-            gpu_name: "AMD Radeon RX 7700 XT (12 GB)".to_string(),
-            is_rocm_ready: true,
+            gpu_name: "Neznáme (spustite kontrolu ROCm)".to_string(),
+            is_rocm_ready: false,
             timestamp_ms: chrono::Utc::now().timestamp_millis(),
         }
     }

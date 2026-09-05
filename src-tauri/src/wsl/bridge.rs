@@ -122,16 +122,20 @@ impl WslBridge {
         let test_script = format!(
             r#"VENV={0}; VENV="${{VENV/#\~/$HOME}}"; test -f "$VENV/bin/python" && "$VENV/bin/python" -c "
 import sys, json
-info = {{'rocm_available': False, 'rocm_version': None, 'gpu_name': None, 'total_vram_mb': 0, 'free_vram_mb': 0, 'hip': False}}
+info = {{'rocm_available': False, 'rocm_version': None, 'gpu_name': None, 'total_vram_mb': None, 'free_vram_mb': None, 'hip': False}}
 try:
     import torch
     info['hip'] = hasattr(torch.version, 'hip') and torch.version.hip is not None
     info['rocm_available'] = torch.cuda.is_available()
     if info['rocm_available']:
         info['gpu_name'] = torch.cuda.get_device_name(0)
-        total = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
-        info['total_vram_mb'] = int(total)
-        info['rocm_version'] = getattr(torch.version, 'hip', 'ROCm 6.4')
+        # mem_get_info() queries the actual driver for live (free, total) VRAM
+        # in bytes and works on both CUDA and the ROCm/HIP backend — this
+        # reports real numbers instead of a hardcoded guess for free memory.
+        free_bytes, total_bytes = torch.cuda.mem_get_info(0)
+        info['total_vram_mb'] = int(total_bytes / (1024 * 1024))
+        info['free_vram_mb'] = int(free_bytes / (1024 * 1024))
+        info['rocm_version'] = getattr(torch.version, 'hip', None)
 except Exception as e:
     info['error'] = str(e)
 print(json.dumps(info))
@@ -146,31 +150,33 @@ print(json.dumps(info))
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if let Some(last_line) = stdout.lines().last() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(last_line.trim()) {
-                        let rocm_avail = val["rocm_available"].as_bool().unwrap_or(false);
-                        let rocm_ver = val["rocm_version"].as_str().map(|s| s.to_string());
-                        let gpu_name = val["gpu_name"].as_str().map(|s| s.to_string());
-                        let total_vram = val["total_vram_mb"].as_u64();
-                        let hip = val["hip"].as_bool().unwrap_or(false);
-
+                        // Report exactly what the venv's PyTorch measured — no
+                        // hardcoded fallback GPU name or VRAM figure. If the venv
+                        // has a different card than the developer's own machine (or
+                        // detection genuinely failed), `None` is the honest answer;
+                        // a fabricated "AMD Radeon RX 7700 XT" here previously made
+                        // every user's dashboard show hardware they may not own.
                         return Ok(RocmStatusInfo {
-                            is_rocm_available: rocm_avail,
-                            rocm_version: rocm_ver,
-                            gpu_device_name: gpu_name
-                                .or_else(|| Some("AMD Radeon RX 7700 XT".to_string())),
-                            total_vram_mb: total_vram.or(Some(12288)),
-                            free_vram_mb: Some(11500),
-                            is_hip_available: hip,
+                            is_rocm_available: val["rocm_available"].as_bool().unwrap_or(false),
+                            rocm_version: val["rocm_version"].as_str().map(|s| s.to_string()),
+                            gpu_device_name: val["gpu_name"].as_str().map(|s| s.to_string()),
+                            total_vram_mb: val["total_vram_mb"].as_u64(),
+                            free_vram_mb: val["free_vram_mb"].as_u64(),
+                            is_hip_available: val["hip"].as_bool().unwrap_or(false),
                         });
                     }
                 }
-                // Fallback estimate if PyTorch ROCm is installed but returned no json
+                // The venv's python ran but printed no parseable JSON (e.g. a
+                // Python-level crash before `print(json.dumps(info))`). We do not
+                // know the real ROCm/VRAM state here, so report "unavailable"
+                // rather than fabricating a successful-looking result.
                 Ok(RocmStatusInfo {
-                    is_rocm_available: true,
-                    rocm_version: Some("ROCm 6.4.2".to_string()),
-                    gpu_device_name: Some("AMD Radeon RX 7700 XT (12 GB)".to_string()),
-                    total_vram_mb: Some(12288),
-                    free_vram_mb: Some(11500),
-                    is_hip_available: true,
+                    is_rocm_available: false,
+                    rocm_version: None,
+                    gpu_device_name: None,
+                    total_vram_mb: None,
+                    free_vram_mb: None,
+                    is_hip_available: false,
                 })
             }
             _ => {
