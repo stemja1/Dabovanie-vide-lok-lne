@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod config;
+pub mod error;
 pub mod monitor;
 pub mod pipeline;
 pub mod wizard;
