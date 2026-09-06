@@ -1,4 +1,5 @@
 use crate::commands::config_commands::ConfigState;
+use crate::error::{AppError, AppResult};
 use crate::wizard::checker::{DependencyChecker, SystemDiagnosticsReport};
 use crate::wizard::installer::WizardInstaller;
 use crate::wizard::models_manifest::{ModelManifestItem, ModelsManifest};
@@ -12,15 +13,16 @@ pub struct WizardState(pub Arc<WizardInstaller>);
 #[tauri::command]
 pub async fn run_system_diagnostics(
     config_state: State<'_, ConfigState>,
-) -> Result<SystemDiagnosticsReport, String> {
+) -> AppResult<SystemDiagnosticsReport> {
     let cfg = {
-        let guard = config_state.0.lock().map_err(|e| e.to_string())?;
+        let guard = config_state.0.lock().map_err(|_| AppError::LockPoisoned)?;
         guard.clone()
     };
 
-    DependencyChecker::run_full_check(&cfg.wsl_distro, &cfg.venv_path, &cfg.workspace_dir)
-        .await
-        .map_err(|e| e.to_string())
+    Ok(
+        DependencyChecker::run_full_check(&cfg.wsl_distro, &cfg.venv_path, &cfg.workspace_dir)
+            .await?,
+    )
 }
 
 #[tauri::command]
@@ -34,9 +36,9 @@ pub async fn run_wizard_step(
     app_handle: AppHandle,
     config_state: State<'_, ConfigState>,
     wizard_state: State<'_, WizardState>,
-) -> Result<bool, String> {
+) -> AppResult<bool> {
     let cfg = {
-        let guard = config_state.0.lock().map_err(|e| e.to_string())?;
+        let guard = config_state.0.lock().map_err(|_| AppError::LockPoisoned)?;
         guard.clone()
     };
 
@@ -54,32 +56,36 @@ pub async fn run_wizard_step(
     });
 
     let success = match step_id.as_str() {
-        "wsl_install" => installer
-            .install_wsl2_ubuntu(&cfg.wsl_distro, Some(tx))
-            .await
-            .map_err(|e| e.to_string())?,
-        "system_packages" => installer
-            .install_system_packages(&cfg.wsl_distro, Some(tx))
-            .await
-            .map_err(|e| e.to_string())?,
-        "python_rocm" => installer
-            .setup_python_venv_and_rocm(
-                &cfg.wsl_distro,
-                &cfg.venv_path,
-                &cfg.workspace_dir,
-                Some(tx),
-            )
-            .await
-            .map_err(|e| e.to_string())?,
-        "lipsync_repos" => installer
-            .setup_lipsync_repos(
-                &cfg.wsl_distro,
-                &cfg.venv_path,
-                &cfg.workspace_dir,
-                Some(tx),
-            )
-            .await
-            .map_err(|e| e.to_string())?,
+        "wsl_install" => {
+            installer
+                .install_wsl2_ubuntu(&cfg.wsl_distro, Some(tx))
+                .await?
+        }
+        "system_packages" => {
+            installer
+                .install_system_packages(&cfg.wsl_distro, Some(tx))
+                .await?
+        }
+        "python_rocm" => {
+            installer
+                .setup_python_venv_and_rocm(
+                    &cfg.wsl_distro,
+                    &cfg.venv_path,
+                    &cfg.workspace_dir,
+                    Some(tx),
+                )
+                .await?
+        }
+        "lipsync_repos" => {
+            installer
+                .setup_lipsync_repos(
+                    &cfg.wsl_distro,
+                    &cfg.venv_path,
+                    &cfg.workspace_dir,
+                    Some(tx),
+                )
+                .await?
+        }
         _ if step_id.starts_with("model_") => {
             let model_id = step_id.trim_start_matches("model_");
             installer
@@ -90,17 +96,16 @@ pub async fn run_wizard_step(
                     model_id,
                     Some(tx),
                 )
-                .await
-                .map_err(|e| e.to_string())?
+                .await?
         }
-        _ => return Err(format!("Neznámy inštalačný krok: {}", step_id)),
+        _ => return Err(AppError::Validation(format!("Neznámy inštalačný krok: {}", step_id))),
     };
 
     if !success {
-        return Err(format!(
+        return Err(AppError::Internal(anyhow::anyhow!(
             "Inštalačný krok '{}' zlyhal. Skontrolujte chybové hlásenie v logu.",
             step_id
-        ));
+        )));
     }
 
     Ok(true)

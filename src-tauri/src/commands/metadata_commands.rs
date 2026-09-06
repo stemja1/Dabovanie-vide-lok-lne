@@ -1,16 +1,17 @@
+use crate::error::AppResult;
 use crate::pipeline::metadata::{UtteranceItem, UtteranceMetadataDocument};
 
 #[tauri::command]
-pub fn load_utterance_metadata(file_path: String) -> Result<UtteranceMetadataDocument, String> {
-    UtteranceMetadataDocument::load_from_file(&file_path).map_err(|e| e.to_string())
+pub fn load_utterance_metadata(file_path: String) -> AppResult<UtteranceMetadataDocument> {
+    Ok(UtteranceMetadataDocument::load_from_file(&file_path)?)
 }
 
 #[tauri::command]
 pub fn save_utterance_metadata(
     file_path: String,
     document: UtteranceMetadataDocument,
-) -> Result<(), String> {
-    document.save_to_file(&file_path).map_err(|e| e.to_string())
+) -> AppResult<()> {
+    Ok(document.save_to_file(&file_path)?)
 }
 
 #[tauri::command]
@@ -44,17 +45,15 @@ pub fn split_utterance_item(
     sk_part2: String,
     zh_part1: String,
     zh_part2: String,
-) -> Result<UtteranceMetadataDocument, String> {
-    document
-        .split_utterance(
-            &utterance_id,
-            split_time,
-            sk_part1,
-            sk_part2,
-            zh_part1,
-            zh_part2,
-        )
-        .map_err(|e| e.to_string())?;
+) -> AppResult<UtteranceMetadataDocument> {
+    document.split_utterance(
+        &utterance_id,
+        split_time,
+        sk_part1,
+        sk_part2,
+        zh_part1,
+        zh_part2,
+    )?;
     Ok(document)
 }
 
@@ -63,9 +62,7 @@ pub fn merge_utterance_items(
     mut document: UtteranceMetadataDocument,
     id1: String,
     id2: String,
-) -> Result<UtteranceMetadataDocument, String> {
-    document
-        .merge_utterances(&id1, &id2)
-        .map_err(|e| e.to_string())?;
+) -> AppResult<UtteranceMetadataDocument> {
+    document.merge_utterances(&id1, &id2)?;
     Ok(document)
 }
