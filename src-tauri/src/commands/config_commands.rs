@@ -37,10 +37,7 @@ pub fn export_config_toml(state: State<'_, ConfigState>) -> AppResult<String> {
 }
 
 #[tauri::command]
-pub fn import_config_toml(
-    toml_str: String,
-    state: State<'_, ConfigState>,
-) -> AppResult<AppConfig> {
+pub fn import_config_toml(toml_str: String, state: State<'_, ConfigState>) -> AppResult<AppConfig> {
     let parsed = AppConfig::from_toml_string(&toml_str)?;
     let default_path = AppConfig::get_default_config_path();
     parsed.save_to_file(&default_path)?;

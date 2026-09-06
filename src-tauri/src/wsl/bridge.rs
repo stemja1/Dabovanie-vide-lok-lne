@@ -1,3 +1,4 @@
+use crate::wsl::path_mapper::PathMapper;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "windows")]
@@ -111,16 +112,13 @@ impl WslBridge {
 
     /// Checks ROCm and PyTorch HIP status inside the target WSL distro.
     pub async fn check_rocm_status(distro: &str, venv_path: &str) -> Result<RocmStatusInfo> {
-        // `venv_path` comes from user-editable AppConfig (settable via `save_config` /
-        // `import_config_toml`), so it MUST be safely quoted before it is spliced into
-        // a bash command string. `VENV="{0}"` (double quotes) would still let bash
-        // evaluate `$(...)`/backticks embedded in the value; `escape_bash_arg` wraps it
-        // in single quotes, which bash never expands, closing that injection vector.
-        let venv_clean = crate::wsl::path_mapper::PathMapper::escape_bash_arg(
-            venv_path.trim_end_matches('/'),
-        );
+        // `venv_path` comes from user-editable AppConfig. `bash_var_with_home_expansion`
+        // escapes the value with single-quotes so bash never expands shell metacharacters,
+        // and generates the leading `~` -> `$HOME` expansion safely.
+        let venv_setup =
+            PathMapper::bash_var_with_home_expansion("VENV", venv_path.trim_end_matches('/'));
         let test_script = format!(
-            r#"VENV={0}; VENV="${{VENV/#\~/$HOME}}"; test -f "$VENV/bin/python" && "$VENV/bin/python" -c "
+            r#"{0} test -f "$VENV/bin/python" && "$VENV/bin/python" -c "
 import sys, json
 info = {{'rocm_available': False, 'rocm_version': None, 'gpu_name': None, 'total_vram_mb': None, 'free_vram_mb': None, 'hip': False}}
 try:
@@ -140,7 +138,7 @@ except Exception as e:
     info['error'] = str(e)
 print(json.dumps(info))
 " || echo '{{"rocm_available": false}}'"#,
-            venv_clean
+            venv_setup
         );
 
         let res = crate::wsl::executor::WslExecutor::run_command_output(distro, &test_script).await;
@@ -194,20 +192,19 @@ print(json.dumps(info))
     }
 
     /// Decodes potential UTF-16LE or UTF-8 output from wsl.exe.
+    /// Uses `.chunks_exact(2)` for stable MSRV compatibility across all Rust toolchains.
     pub fn decode_wsl_output(bytes: &[u8]) -> String {
         if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
             // UTF-16LE BOM
-            let (chunks, _) = bytes[2..].as_chunks::<2>();
-            let u16_vec: Vec<u16> = chunks
-                .iter()
+            let u16_vec: Vec<u16> = bytes[2..]
+                .chunks_exact(2)
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
                 .collect();
             String::from_utf16_lossy(&u16_vec)
         } else if bytes.iter().filter(|&&b| b == 0).count() > bytes.len() / 4 {
             // Likely UTF-16LE without BOM
-            let (chunks, _) = bytes.as_chunks::<2>();
-            let u16_vec: Vec<u16> = chunks
-                .iter()
+            let u16_vec: Vec<u16> = bytes
+                .chunks_exact(2)
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
                 .collect();
             String::from_utf16_lossy(&u16_vec)

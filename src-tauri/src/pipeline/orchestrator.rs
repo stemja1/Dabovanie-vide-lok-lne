@@ -457,21 +457,22 @@ fi
         meta_wsl: &str,
         config: &AppConfig,
     ) -> String {
-        // `venv_path`/`workspace_dir` are user-editable AppConfig data — escape them
-        // the same way as `input_wsl`/`output_wsl`/`meta_wsl` below. A bare
-        // `VENV="{0}"` (double-quoted) would still let bash expand `$(...)` /
-        // backticks embedded in the config value.
-        let venv_normalized = PathMapper::escape_bash_arg(config.venv_path.trim_end_matches('/'));
-        let ws_normalized =
-            PathMapper::escape_bash_arg(config.workspace_dir.trim_end_matches('/'));
+        let venv_setup = PathMapper::bash_var_with_home_expansion(
+            "VENV",
+            config.venv_path.trim_end_matches('/'),
+        );
+        let ws_setup = PathMapper::bash_var_with_home_expansion(
+            "WORKSPACE",
+            config.workspace_dir.trim_end_matches('/'),
+        );
 
         let q_in = PathMapper::escape_bash_arg(input_wsl);
         let q_out = PathMapper::escape_bash_arg(output_wsl);
         let q_meta = PathMapper::escape_bash_arg(meta_wsl);
 
         let setup_env = format!(
-            r#"VENV={0}; WORKSPACE={1}; VENV="${{VENV/#\~/$HOME}}"; WORKSPACE="${{WORKSPACE/#\~/$HOME}}"; PYTHON_BIN="$VENV/bin/python"; SCRIPT_DIR="$WORKSPACE/scripts"; "#,
-            venv_normalized, ws_normalized
+            r#"{0} {1} PYTHON_BIN="$VENV/bin/python"; SCRIPT_DIR="$WORKSPACE/scripts"; "#,
+            venv_setup, ws_setup
         );
 
         match stage_id {

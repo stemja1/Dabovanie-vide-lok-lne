@@ -81,6 +81,17 @@ impl PathMapper {
         format!("'{}'", arg.replace('\'', "''"))
     }
 
+    /// Generates bash statements to safely assign a variable and expand a leading `~` to `$HOME`.
+    /// E.g. `bash_var_with_home_expansion("VENV", "~/.dubbing_env")`
+    /// produces: `VENV='~/.dubbing_env'; VENV="${VENV/#\~/$HOME}";`
+    pub fn bash_var_with_home_expansion(var_name: &str, raw_value: &str) -> String {
+        format!(
+            "{0}={1}; {0}=\"${{{0}/#\\~/$HOME}}\";",
+            var_name,
+            Self::escape_bash_arg(raw_value)
+        )
+    }
+
     /// Expands "~" with WSL home path in script paths
     pub fn expand_wsl_home(path: &str, wsl_user: Option<&str>) -> String {
         if path.starts_with('~') {
@@ -149,6 +160,30 @@ mod tests {
         assert_eq!(
             PathMapper::escape_bash_arg("video; rm -rf /; echo test"),
             "'video; rm -rf /; echo test'"
+        );
+    }
+
+    #[test]
+    fn test_escape_powershell_arg() {
+        assert_eq!(
+            PathMapper::escape_powershell_arg("Ubuntu-24.04"),
+            "'Ubuntu-24.04'"
+        );
+        assert_eq!(
+            PathMapper::escape_powershell_arg("Ubuntu'; iex evil"),
+            "'Ubuntu''; iex evil'"
+        );
+    }
+
+    #[test]
+    fn test_bash_var_with_home_expansion() {
+        assert_eq!(
+            PathMapper::bash_var_with_home_expansion("VENV", "~/.dubbing_env"),
+            "VENV='~/.dubbing_env'; VENV=\"${VENV/#\\~/$HOME}\";"
+        );
+        assert_eq!(
+            PathMapper::bash_var_with_home_expansion("DIR", "/opt/custom path"),
+            "DIR='/opt/custom path'; DIR=\"${DIR/#\\~/$HOME}\";"
         );
     }
 }

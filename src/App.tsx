@@ -7,12 +7,13 @@ import { DubbedVideoPlayer } from './components/VideoPlayer/DubbedVideoPlayer';
 import { SetupWizard } from './components/Wizard/SetupWizard';
 import { LogViewer } from './components/Logs/LogViewer';
 import { SettingsModal } from './components/Settings/SettingsModal';
-import { LiveSystemMetrics, PipelineExecutionState } from './types/pipeline';
+import { LiveSystemMetrics, PipelineExecutionState, RocmStatusInfo } from './types/pipeline';
 import { invokeCommand, addTauriListener } from './utils/tauriBridge';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('pipeline');
   const [metrics, setMetrics] = useState<LiveSystemMetrics | null>(null);
+  const [rocmStatus, setRocmStatus] = useState<RocmStatusInfo | null>(null);
   const [pipelineState, setPipelineState] = useState<PipelineExecutionState | null>(null);
 
   // Poll live metrics for header
@@ -28,6 +29,30 @@ export const App: React.FC = () => {
 
     fetchMetrics();
     const interval = setInterval(fetchMetrics, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Poll ROCm hardware status on a 20s interval + initial mount
+  useEffect(() => {
+    const fetchRocm = async () => {
+      try {
+        const r = await invokeCommand<RocmStatusInfo>('check_rocm_status');
+        setRocmStatus(r);
+      } catch (err) {
+        setRocmStatus({
+          rocm_available: false,
+          rocm_version: null,
+          gpu_name: null,
+          total_vram_mb: 0,
+          free_vram_mb: 0,
+          hip: false,
+          error: String(err),
+        });
+      }
+    };
+
+    fetchRocm();
+    const interval = setInterval(fetchRocm, 20000);
     return () => clearInterval(interval);
   }, []);
 
@@ -89,6 +114,7 @@ export const App: React.FC = () => {
       {/* Header with Live AMD RX 7700 XT VRAM / RAM metrics */}
       <Header
         metrics={metrics}
+        rocmStatus={rocmStatus}
         onOpenSettings={() => setActiveTab('settings')}
         onOpenWizard={() => setActiveTab('wizard')}
         activeTab={activeTab}

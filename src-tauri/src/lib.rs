@@ -59,6 +59,7 @@ pub fn run() {
             get_live_system_metrics,
             check_wsl_status,
             check_rocm_status,
+            pick_video_dialog,
             open_path_in_explorer,
         ])
         .run(tauri::generate_context!())

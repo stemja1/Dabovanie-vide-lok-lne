@@ -69,6 +69,16 @@ export interface LiveSystemMetrics {
   timestamp_ms: number;
 }
 
+export interface RocmStatusInfo {
+  rocm_available: boolean;
+  rocm_version: string | null;
+  gpu_name: string | null;
+  total_vram_mb: number;
+  free_vram_mb: number;
+  hip: boolean;
+  error: string | null;
+}
+
 export interface ProcessLogLine {
   stream: string;
   message: string;

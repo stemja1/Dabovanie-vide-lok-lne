@@ -9,7 +9,50 @@ on:
   workflow_dispatch:
 
 jobs:
+  quality-gate:
+    name: "Rust & Frontend Quality Gate"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable with clippy and rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Linux system dependencies for Tauri checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Check Rust formatting (cargo fmt)
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Lint Rust codebase (cargo clippy)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run Backend Unit & Integration Tests (cargo test)
+        working-directory: src-tauri
+        run: cargo test --all-features
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Typecheck and Build Frontend
+        run: npm run build
+
   build-tauri:
+    name: "Build Windows App"
+    needs: quality-gate
     permissions:
       contents: write
     strategy:

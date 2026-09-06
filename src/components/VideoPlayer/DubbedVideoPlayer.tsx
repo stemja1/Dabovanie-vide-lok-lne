@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Play,
   Pause,
@@ -12,8 +12,9 @@ import {
   Subtitles,
   Columns,
   Square,
+  RotateCcw,
 } from 'lucide-react';
-import { invokeCommand } from '../../utils/tauriBridge';
+import { invokeCommand, convertVideoPathToUrl } from '../../utils/tauriBridge';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
@@ -33,18 +34,91 @@ export const DubbedVideoPlayer: React.FC<DubbedVideoPlayerProps> = ({
   const [viewMode, setViewMode] = useState<'single' | 'split'>('single');
   const [subtitlesMode, setSubtitlesMode] = useState<'both' | 'zh' | 'sk' | 'none'>('both');
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [currentTime, setCurrentTime] = useState<number>(3.5);
-  const duration = 14.8;
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
+
+  const [inputSrc, setInputSrc] = useState<string>('');
+  const [outputSrc, setOutputSrc] = useState<string>('');
+
+  const inputVideoRef = useRef<HTMLVideoElement>(null);
+  const outputVideoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (inputVideoPath) {
+      convertVideoPathToUrl(inputVideoPath).then((url) => {
+        if (isMounted) setInputSrc(url);
+      });
+    } else {
+      setInputSrc('');
+    }
+
+    if (outputVideoPath) {
+      convertVideoPathToUrl(outputVideoPath).then((url) => {
+        if (isMounted) setOutputSrc(url);
+      });
+    } else {
+      setOutputSrc('');
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [inputVideoPath, outputVideoPath]);
 
   const currentSubtitle = {
     sk: 'Dobrý deň, vítam vás pri prezentácii nášho nového produktu.',
     zh: '您好，欢迎来到我们新产品的展示会。',
   };
 
+  const activeVideoSrc = outputSrc || inputSrc;
+  const inputFilename = inputVideoPath ? inputVideoPath.split(/[/\\]/).pop() : 'vstupne_video.mp4';
+  const outputFilename = outputVideoPath
+    ? outputVideoPath.split(/[/\\]/).pop()
+    : `${inputFilename?.replace(/\.[^/.]+$/, '')}_dubbed_zh.mp4`;
+
   const handleOpenOutput = async () => {
-    if (outputVideoPath) {
-      await invokeCommand('open_path_in_explorer', { path: outputVideoPath });
+    const targetPath = outputVideoPath || inputVideoPath;
+    if (targetPath) {
+      await invokeCommand('open_path_in_explorer', { path: targetPath });
     }
+  };
+
+  const togglePlayPause = () => {
+    const nextPlaying = !isPlaying;
+    setIsPlaying(nextPlaying);
+
+    if (outputVideoRef.current) {
+      if (nextPlaying) outputVideoRef.current.play().catch(console.warn);
+      else outputVideoRef.current.pause();
+    }
+    if (inputVideoRef.current) {
+      if (nextPlaying) inputVideoRef.current.play().catch(console.warn);
+      else inputVideoRef.current.pause();
+    }
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const target = parseFloat(e.target.value);
+    setCurrentTime(target);
+    if (outputVideoRef.current) outputVideoRef.current.currentTime = target;
+    if (inputVideoRef.current) inputVideoRef.current.currentTime = target;
+  };
+
+  const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    const curr = (e.target as HTMLVideoElement).currentTime;
+    setCurrentTime(curr);
+    const dur = (e.target as HTMLVideoElement).duration;
+    if (!isNaN(dur) && dur > 0 && duration !== dur) {
+      setDuration(dur);
+    }
+  };
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    const ms = Math.floor((secs % 1) * 10);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms}`;
   };
 
   return (
@@ -55,10 +129,14 @@ export const DubbedVideoPlayer: React.FC<DubbedVideoPlayerProps> = ({
           <div className="flex items-center gap-2">
             <Film className="w-5 h-5 text-indigo-400" />
             <h2 className="text-xl font-bold text-slate-100">Náhľad Dabovaného Videa</h2>
-            <Badge variant="success">Final MP4 (H.264 + AAC)</Badge>
+            <Badge variant={outputVideoPath ? 'success' : 'primary'}>
+              {outputVideoPath ? 'Finálne video (H.264 + AAC)' : 'Zdrojové video pripravené'}
+            </Badge>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Výsledné video s čínskym dabingom a synchronizovaným lip-syncom (LatentSync 1.5).
+            {outputVideoPath
+              ? 'Výsledné video s čínskym dabingom a synchronizovaným lip-syncom (LatentSync 1.5).'
+              : 'Náhľad načítaného slovenského videa pripraveného na spracovanie.'}
           </p>
         </div>
 
@@ -85,46 +163,82 @@ export const DubbedVideoPlayer: React.FC<DubbedVideoPlayerProps> = ({
 
       {/* Video Display Area */}
       <Card className="p-0 overflow-hidden bg-black border-slate-800 shadow-2xl relative group">
-        <div className={`grid ${viewMode === 'split' ? 'grid-cols-2 divide-x divide-slate-800' : 'grid-cols-1'} aspect-video bg-slate-950`}>
+        <div
+          className={`grid ${
+            viewMode === 'split' ? 'grid-cols-2 divide-x divide-slate-800' : 'grid-cols-1'
+          } aspect-video bg-slate-950 relative`}
+        >
           {/* Split Mode: Original Video */}
           {viewMode === 'split' && (
-            <div className="relative flex items-center justify-center bg-slate-950/90 overflow-hidden">
+            <div className="relative flex items-center justify-center bg-slate-950 overflow-hidden">
               <div className="absolute top-3 left-3 z-10">
-                <Badge variant="secondary" size="sm">Originál (Slovenčina)</Badge>
+                <Badge variant="secondary" size="sm">
+                  Originál (Slovenčina)
+                </Badge>
               </div>
-              <div className="text-center p-6 space-y-2">
-                <div className="w-16 h-16 mx-auto rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500">
-                  <Film className="w-8 h-8" />
+
+              {inputSrc ? (
+                <video
+                  ref={inputVideoRef}
+                  src={inputSrc}
+                  muted={true}
+                  playsInline
+                  className="w-full h-full object-contain bg-black"
+                  onTimeUpdate={handleTimeUpdate}
+                  onEnded={() => setIsPlaying(false)}
+                />
+              ) : (
+                <div className="text-center p-6 space-y-2">
+                  <div className="w-16 h-16 mx-auto rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500">
+                    <Film className="w-8 h-8" />
+                  </div>
+                  <p className="text-xs text-slate-400 font-mono">{inputFilename}</p>
                 </div>
-                <p className="text-xs text-slate-400 font-mono">vstupna_prezentacia.mp4</p>
-              </div>
+              )}
             </div>
           )}
 
           {/* Main / Dubbed Video */}
           <div className="relative flex items-center justify-center bg-slate-950 overflow-hidden">
             <div className="absolute top-3 left-3 z-10">
-              <Badge variant="primary" size="sm" icon={<Sparkles className="w-3 h-3 text-indigo-400" />}>
-                Dabing (Čínština + LatentSync 1.5)
+              <Badge
+                variant="primary"
+                size="sm"
+                icon={<Sparkles className="w-3 h-3 text-indigo-400" />}
+              >
+                {outputVideoPath ? 'Dabing (Čínština + LatentSync 1.5)' : 'Náhľad Videa'}
               </Badge>
             </div>
 
-            {/* Simulated Animated Video Canvas */}
-            <div className="w-full h-full flex items-center justify-center flex-col p-8 text-center bg-gradient-to-b from-indigo-950/20 to-slate-950">
-              <div className="w-20 h-20 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-3 shadow-xl">
-                <Sparkles className="w-10 h-10 animate-pulse" />
+            {activeVideoSrc ? (
+              <video
+                ref={outputVideoRef}
+                src={activeVideoSrc}
+                muted={isMuted}
+                playsInline
+                className="w-full h-full object-contain bg-black"
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={(e) => {
+                  const d = (e.target as HTMLVideoElement).duration;
+                  if (!isNaN(d)) setDuration(d);
+                }}
+                onEnded={() => setIsPlaying(false)}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center flex-col p-8 text-center bg-gradient-to-b from-indigo-950/20 to-slate-950">
+                <div className="w-20 h-20 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-3 shadow-xl">
+                  <Sparkles className="w-10 h-10 animate-pulse" />
+                </div>
+                <h4 className="font-semibold text-sm text-slate-200">{outputFilename}</h4>
+                <p className="text-xs text-slate-400 mt-1">
+                  Rozlíšenie: 1080p • 25 FPS • Piper TTS (zh_CN-huayan)
+                </p>
               </div>
-              <h4 className="font-semibold text-sm text-slate-200">
-                vstupna_prezentacia_dubbed_zh.mp4
-              </h4>
-              <p className="text-xs text-slate-400 mt-1">
-                Rozlíšenie: 1080p • 25 FPS • Piper TTS (zh_CN-huayan)
-              </p>
-            </div>
+            )}
 
             {/* Subtitles Overlay */}
             {subtitlesMode !== 'none' && (
-              <div className="absolute bottom-16 left-0 right-0 px-6 text-center z-10 pointer-events-none">
+              <div className="absolute bottom-6 left-0 right-0 px-6 text-center z-10 pointer-events-none">
                 <div className="inline-block bg-black/85 backdrop-blur-md px-4 py-2 rounded-xl border border-white/10 text-center shadow-lg space-y-0.5">
                   {(subtitlesMode === 'both' || subtitlesMode === 'zh') && (
                     <p className="text-sm font-semibold text-yellow-300 font-sans tracking-wide">
@@ -132,9 +246,7 @@ export const DubbedVideoPlayer: React.FC<DubbedVideoPlayerProps> = ({
                     </p>
                   )}
                   {(subtitlesMode === 'both' || subtitlesMode === 'sk') && (
-                    <p className="text-xs text-slate-200/90 font-sans">
-                      {currentSubtitle.sk}
-                    </p>
+                    <p className="text-xs text-slate-200/90 font-sans">{currentSubtitle.sk}</p>
                   )}
                 </div>
               </div>
@@ -146,18 +258,26 @@ export const DubbedVideoPlayer: React.FC<DubbedVideoPlayerProps> = ({
         <div className="bg-slate-900/95 border-t border-slate-800 p-3 flex flex-col gap-2">
           {/* Progress Timeline */}
           <div className="flex items-center gap-3">
-            <span className="text-[11px] font-mono text-slate-400">00:03.5</span>
-            <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden cursor-pointer">
-              <div className="h-full bg-indigo-500 rounded-full w-[24%]" />
-            </div>
-            <span className="text-[11px] font-mono text-slate-400">00:14.8</span>
+            <span className="text-[11px] font-mono text-slate-400">{formatTime(currentTime)}</span>
+            <input
+              type="range"
+              min={0}
+              max={duration || 100}
+              step={0.1}
+              value={currentTime}
+              onChange={handleSeek}
+              className="flex-1 h-1.5 bg-slate-800 accent-indigo-500 rounded-full cursor-pointer"
+            />
+            <span className="text-[11px] font-mono text-slate-400">
+              {formatTime(duration || 0)}
+            </span>
           </div>
 
           {/* Bottom Buttons */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setIsPlaying(!isPlaying)}
+                onClick={togglePlayPause}
                 className="p-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-md"
               >
                 {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}

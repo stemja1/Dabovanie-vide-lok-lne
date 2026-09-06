@@ -72,10 +72,7 @@ fn test_workspace_var_assignment_blocks_command_substitution() {
     let marker = std::env::temp_dir().join("ai_dubbing_injection_test_marker");
     let _ = std::fs::remove_file(&marker);
 
-    let malicious_workspace = format!(
-        "~/foo\"; touch {}; echo \"",
-        marker.display()
-    );
+    let malicious_workspace = format!("~/foo\"; touch {}; echo \"", marker.display());
     let escaped = PathMapper::escape_bash_arg(&malicious_workspace);
 
     // Exactly the pattern used in the fixed source: `WORKSPACE={escaped}`
@@ -121,7 +118,10 @@ fn test_powershell_arg_escaping() {
 
     for input in malicious_inputs {
         let escaped = PathMapper::escape_powershell_arg(input);
-        assert!(escaped.starts_with('\''), "must start with quote: {escaped}");
+        assert!(
+            escaped.starts_with('\''),
+            "must start with quote: {escaped}"
+        );
         assert!(escaped.ends_with('\''), "must end with quote: {escaped}");
 
         // Every internal `'` must be doubled (PowerShell's single-quote escape),

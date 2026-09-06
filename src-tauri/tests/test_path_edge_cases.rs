@@ -27,3 +27,10 @@ fn test_wsl_to_win_edge_cases() {
         "\\\\wsl.localhost\\Ubuntu-24.04\\var\\tmp\\render.mp4"
     );
 }
+
+#[test]
+fn test_sanitize_path() {
+    assert!(PathMapper::sanitize_path("/home/user/valid").is_ok());
+    assert!(PathMapper::sanitize_path("C:\\Users\\valid.mp4").is_ok());
+    assert!(PathMapper::sanitize_path("/home/user\0/hack").is_err());
+}

@@ -44,6 +44,7 @@ where
 #[tauri::command]
 pub async fn set_pipeline_video(
     video_path: String,
+    app_handle: AppHandle,
     orchestrator_state: State<'_, OrchestratorState>,
     config_state: State<'_, ConfigState>,
 ) -> AppResult<PipelineExecutionState> {
@@ -56,8 +57,9 @@ pub async fn set_pipeline_video(
         .0
         .set_input_video(&video_path, &distro)
         .await;
-    let st = orchestrator_state.0.state.lock().await;
-    Ok(st.clone())
+    let st = orchestrator_state.0.state.lock().await.clone();
+    let _ = app_handle.emit("pipeline_state_updated", &st);
+    Ok(st)
 }
 
 #[tauri::command]
@@ -94,9 +96,11 @@ pub async fn start_pipeline_execution(
     let (tx, rx) = mpsc::unbounded_channel::<ProcessLogLine>();
     spawn_log_forwarder(app_handle.clone(), rx);
 
-    tokio::spawn(run_and_report(app_handle, orchestrator.clone(), async move {
-        orchestrator.start_pipeline(cfg, Some(tx)).await
-    }));
+    tokio::spawn(run_and_report(
+        app_handle,
+        orchestrator.clone(),
+        async move { orchestrator.start_pipeline(cfg, Some(tx)).await },
+    ));
 
     Ok(())
 }
@@ -116,9 +120,11 @@ pub async fn continue_pipeline_after_review(
     let (tx, rx) = mpsc::unbounded_channel::<ProcessLogLine>();
     spawn_log_forwarder(app_handle.clone(), rx);
 
-    tokio::spawn(run_and_report(app_handle, orchestrator.clone(), async move {
-        orchestrator.continue_after_review(cfg, Some(tx)).await
-    }));
+    tokio::spawn(run_and_report(
+        app_handle,
+        orchestrator.clone(),
+        async move { orchestrator.continue_after_review(cfg, Some(tx)).await },
+    ));
 
     Ok(())
 }
@@ -139,11 +145,15 @@ pub async fn run_single_stage(
     let (tx, rx) = mpsc::unbounded_channel::<ProcessLogLine>();
     spawn_log_forwarder(app_handle.clone(), rx);
 
-    tokio::spawn(run_and_report(app_handle, orchestrator.clone(), async move {
-        orchestrator
-            .run_single_stage(stage_index, &cfg, Some(tx))
-            .await
-    }));
+    tokio::spawn(run_and_report(
+        app_handle,
+        orchestrator.clone(),
+        async move {
+            orchestrator
+                .run_single_stage(stage_index, &cfg, Some(tx))
+                .await
+        },
+    ));
 
     Ok(())
 }

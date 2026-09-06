@@ -174,14 +174,10 @@ impl WslExecutor {
         let sender_stderr = log_sender.clone();
 
         let stdout_task =
-            tokio::spawn(
-                async move { Self::stream_lines(stdout, "stdout", sender_stdout).await },
-            );
+            tokio::spawn(async move { Self::stream_lines(stdout, "stdout", sender_stdout).await });
 
         let stderr_task =
-            tokio::spawn(
-                async move { Self::stream_lines(stderr, "stderr", sender_stderr).await },
-            );
+            tokio::spawn(async move { Self::stream_lines(stderr, "stderr", sender_stderr).await });
 
         // Polling loop to support both timeout and immediate cancellation
         let poll_interval = Duration::from_millis(100);

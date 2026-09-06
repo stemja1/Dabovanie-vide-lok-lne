@@ -199,19 +199,15 @@ echo ">>> Systémové balíky úspešne nainštalované."
             return Ok(false);
         }
 
-        // `venv_path`/`workspace_dir` are user-editable AppConfig data — escape them
-        // with `PathMapper::escape_bash_arg` before splicing into the shell script.
-        // A bare `VENV="{0}"` would still let bash expand `$(...)`/backticks
-        // embedded in the config value.
-        let venv_q = PathMapper::escape_bash_arg(venv_path);
-        let workspace_q = PathMapper::escape_bash_arg(workspace_dir);
+        let venv_setup = PathMapper::bash_var_with_home_expansion("VENV", venv_path);
+        let ws_setup = PathMapper::bash_var_with_home_expansion("WORKSPACE", workspace_dir);
+
         let cmd = format!(
             r#"
 export PYTHONUNBUFFERED=1
-VENV={0}
-WORKSPACE={1}
-VENV="${{VENV/#\~/$HOME}}"
-WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
+{0}
+{1}
+export VENV WORKSPACE
 
 mkdir -p "$VENV" "$WORKSPACE"
 if [ ! -f "$VENV/bin/python" ]; then
@@ -244,7 +240,7 @@ for cand in /mnt/c/Dabovanie-vide-lok-lne-main/scripts /mnt/c/*/Dabovanie-vide-l
 done
 echo ">>> Python & ROCm prostredie je úspešne nakonfigurované."
 "#,
-            venv_q, workspace_q
+            venv_setup, ws_setup
         );
 
         let res = WslExecutor::run_streaming_command(
@@ -270,15 +266,15 @@ echo ">>> Python & ROCm prostredie je úspešne nakonfigurované."
             return Ok(false);
         }
 
-        let venv_q = PathMapper::escape_bash_arg(venv_path);
-        let workspace_q = PathMapper::escape_bash_arg(workspace_dir);
+        let venv_setup = PathMapper::bash_var_with_home_expansion("VENV", venv_path);
+        let ws_setup = PathMapper::bash_var_with_home_expansion("WORKSPACE", workspace_dir);
+
         let cmd = format!(
             r#"
 export PYTHONUNBUFFERED=1
-VENV={0}
-WORKSPACE={1}
-VENV="${{VENV/#\~/$HOME}}"
-WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
+{0}
+{1}
+export VENV WORKSPACE
 
 mkdir -p "$WORKSPACE"
 cd "$WORKSPACE"
@@ -304,7 +300,7 @@ if [ ! -d "$WORKSPACE/musetalk" ]; then
 fi
 echo ">>> AI Repozitáre pre lip-sync sú úspešne pripravené."
 "#,
-            venv_q, workspace_q
+            venv_setup, ws_setup
         );
 
         let res = WslExecutor::run_streaming_command(
@@ -331,27 +327,15 @@ echo ">>> AI Repozitáre pre lip-sync sú úspešne pripravené."
             return Ok(false);
         }
 
-        // `venv_path`/`workspace_dir` are user-editable AppConfig data. Two
-        // precautions here, not just one:
-        //   1. Escape them with `escape_bash_arg` before the `VENV=...`/`WORKSPACE=...`
-        //      bash assignment (a bare double-quoted `"{0}"` would still let bash
-        //      expand `$(...)`/backticks embedded in the value).
-        //   2. `export WORKSPACE` and read it back inside the embedded Python script
-        //      via `os.environ['WORKSPACE']` instead of re-interpolating the raw
-        //      value a second time as a Python string literal (`'{1}'`). The whole
-        //      `"$PY" -c "..."` script sits inside a bash *double-quoted* string, so
-        //      a second raw substitution there would reopen the exact same
-        //      injection vector one level down, even with the bash variable fixed.
-        let venv_q = PathMapper::escape_bash_arg(venv_path);
-        let workspace_q = PathMapper::escape_bash_arg(workspace_dir);
+        let venv_setup = PathMapper::bash_var_with_home_expansion("VENV", venv_path);
+        let ws_setup = PathMapper::bash_var_with_home_expansion("WORKSPACE", workspace_dir);
+
         let py_downloader = format!(
             r#"
 export PYTHONUNBUFFERED=1
-VENV={0}
-WORKSPACE={1}
-VENV="${{VENV/#\~/$HOME}}"
-WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
-export WORKSPACE
+{0}
+{1}
+export VENV WORKSPACE
 
 PY="$VENV/bin/python"
 if [ ! -f "$PY" ]; then
@@ -497,7 +481,7 @@ elif model_id == 'musetalk-weights':
 print('HOTOVO', flush=True)
 "
 "#,
-            venv_q, workspace_q, model_id
+            venv_setup, ws_setup, model_id
         );
 
         let res = WslExecutor::run_streaming_command(

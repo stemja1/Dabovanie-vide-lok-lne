@@ -98,7 +98,12 @@ pub async fn run_wizard_step(
                 )
                 .await?
         }
-        _ => return Err(AppError::Validation(format!("Neznámy inštalačný krok: {}", step_id))),
+        _ => {
+            return Err(AppError::Validation(format!(
+                "Neznámy inštalačný krok: {}",
+                step_id
+            )))
+        }
     };
 
     if !success {

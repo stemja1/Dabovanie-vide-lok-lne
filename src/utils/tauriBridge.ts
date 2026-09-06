@@ -14,6 +14,46 @@ export const isTauriEnvironment = (): boolean => {
   return typeof window !== 'undefined' && (!!window.__TAURI_INTERNALS__ || !!window.__TAURI__);
 };
 
+export const isVideoFile = (pathOrName: string): boolean => {
+  if (!pathOrName) return false;
+  const lower = pathOrName.toLowerCase();
+  return (
+    lower.endsWith('.mp4') ||
+    lower.endsWith('.mkv') ||
+    lower.endsWith('.mov') ||
+    lower.endsWith('.webm') ||
+    lower.endsWith('.avi') ||
+    lower.endsWith('.flv') ||
+    lower.endsWith('.wmv') ||
+    lower.endsWith('.m4v')
+  );
+};
+
+export async function convertVideoPathToUrl(path?: string | null): Promise<string> {
+  if (!path) return '';
+  if (
+    path.startsWith('blob:') ||
+    path.startsWith('http://') ||
+    path.startsWith('https://') ||
+    path.startsWith('data:')
+  ) {
+    return path;
+  }
+  if (isTauriEnvironment()) {
+    try {
+      const { convertFileSrc } = await import('@tauri-apps/api/core');
+      return convertFileSrc(path);
+    } catch (e) {
+      console.warn('Failed to convertFileSrc:', e);
+    }
+  }
+  return path;
+}
+
+export async function pickVideoFileDialog(): Promise<string | null> {
+  return await invokeCommand<string | null>('pick_video_dialog');
+}
+
 // Default in-memory config for web dev / fallback
 let mockConfig: AppConfig = {
   wsl_distro: 'Ubuntu-24.04',
@@ -243,6 +283,31 @@ export async function invokeCommand<T>(command: string, args: Record<string, any
         timestamp_ms: Date.now(),
       };
       return metrics as unknown as T;
+    }
+
+    case 'check_rocm_status': {
+      return {
+        rocm_available: true,
+        rocm_version: 'ROCm 6.4.2 (HIP 6.2)',
+        gpu_name: 'AMD Radeon RX 7700 XT (12 GB)',
+        total_vram_mb: 12288,
+        free_vram_mb: 8168,
+        hip: true,
+        error: null,
+      } as unknown as T;
+    }
+
+    case 'check_wsl_status': {
+      return {
+        is_wsl_installed: true,
+        is_default_version_2: true,
+        distros: [
+          { name: 'Ubuntu-24.04', is_default: true, version: 2, state: 'Running' }
+        ],
+        target_distro_found: true,
+        is_target_distro_running: true,
+        kernel_version: '5.15.153.1-microsoft-standard-WSL2',
+      } as unknown as T;
     }
 
     case 'load_utterance_metadata':

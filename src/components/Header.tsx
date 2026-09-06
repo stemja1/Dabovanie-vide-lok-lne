@@ -1,11 +1,12 @@
 import React from 'react';
 import { Cpu, HardDrive, Settings, Wrench, ShieldCheck, AlertTriangle } from 'lucide-react';
-import { LiveSystemMetrics } from '../types/pipeline';
+import { LiveSystemMetrics, RocmStatusInfo } from '../types/pipeline';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 
 interface HeaderProps {
   metrics: LiveSystemMetrics | null;
+  rocmStatus: RocmStatusInfo | null;
   onOpenSettings: () => void;
   onOpenWizard: () => void;
   activeTab: string;
@@ -13,16 +14,25 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   metrics,
+  rocmStatus,
   onOpenSettings,
   onOpenWizard,
 }) => {
-  const vramPercent = metrics ? metrics.gpu_vram_percent : 33.5;
-  const vramUsedGb = metrics ? (metrics.gpu_vram_used_mb / 1024).toFixed(1) : '4.1';
-  const vramTotalGb = metrics ? (metrics.gpu_vram_total_mb / 1024).toFixed(0) : '12';
+  const vramPercent = metrics ? metrics.gpu_vram_percent : (rocmStatus?.rocm_available ? 33.5 : 0);
+  const vramUsedGb = metrics ? (metrics.gpu_vram_used_mb / 1024).toFixed(1) : (rocmStatus?.rocm_available ? '4.1' : '0.0');
+  const vramTotalGb = rocmStatus && rocmStatus.total_vram_mb > 0
+    ? (rocmStatus.total_vram_mb / 1024).toFixed(0)
+    : metrics
+    ? (metrics.gpu_vram_total_mb / 1024).toFixed(0)
+    : '12';
 
   const ramPercent = metrics ? metrics.host_ram_percent : 51.4;
   const ramUsedGb = metrics ? (metrics.host_ram_used_mb / 1024).toFixed(1) : '8.4';
   const ramTotalGb = metrics ? (metrics.host_ram_total_mb / 1024).toFixed(0) : '16';
+
+  const isRocmActive = rocmStatus ? rocmStatus.rocm_available : (metrics?.is_rocm_ready ?? true);
+  const gpuLabel = rocmStatus?.gpu_name || metrics?.gpu_name || 'RX 7700 XT VRAM';
+  const rocmVersionLabel = rocmStatus?.rocm_version || 'ROCm 6.4.2';
 
   return (
     <header className="h-16 border-b border-slate-800/80 bg-slate-900/90 backdrop-blur-md px-6 flex items-center justify-between z-30 select-none">
@@ -41,8 +51,8 @@ export const Header: React.FC<HeaderProps> = ({
             <Badge variant="primary" size="sm">SK → ZH v1.1.9</Badge>
           </div>
           <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-            WSL2 Ubuntu 24.04 • ROCm 6.4.2 • Sekvenčný Pipeline
+            <span className={`w-1.5 h-1.5 rounded-full ${isRocmActive ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+            WSL2 Ubuntu 24.04 • {isRocmActive ? rocmVersionLabel : 'CPU Fallback'} • Sekvenčný Pipeline
           </p>
         </div>
       </div>
@@ -51,20 +61,22 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="hidden md:flex items-center gap-6 bg-slate-950/60 border border-slate-800/80 rounded-xl px-4 py-2">
         {/* GPU VRAM Monitor */}
         <div className="flex items-center gap-3">
-          <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20">
+          <div className={`p-1.5 rounded-lg border ${isRocmActive ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`}>
             <Cpu className="w-4 h-4" />
           </div>
           <div>
             <div className="flex items-center justify-between gap-2 text-[11px]">
-              <span className="text-slate-400 font-medium">RX 7700 XT VRAM</span>
+              <span className="text-slate-400 font-medium truncate max-w-[140px]" title={gpuLabel}>
+                {gpuLabel.includes('7700') ? 'RX 7700 XT VRAM' : gpuLabel}
+              </span>
               <span className="font-mono text-slate-200 font-semibold">{vramUsedGb} / {vramTotalGb} GB</span>
             </div>
             <div className="w-28 h-1.5 bg-slate-800 rounded-full overflow-hidden mt-1">
               <div
                 className={`h-full rounded-full transition-all duration-300 ${
-                  vramPercent > 85 ? 'bg-rose-500' : vramPercent > 70 ? 'bg-amber-500' : 'bg-indigo-500'
+                  !isRocmActive ? 'bg-slate-600' : vramPercent > 85 ? 'bg-rose-500' : vramPercent > 70 ? 'bg-amber-500' : 'bg-indigo-500'
                 }`}
-                style={{ width: `${vramPercent}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, vramPercent))}%` }}
               />
             </div>
           </div>
@@ -87,7 +99,7 @@ export const Header: React.FC<HeaderProps> = ({
                 className={`h-full rounded-full transition-all duration-300 ${
                   ramPercent > 85 ? 'bg-rose-500' : 'bg-emerald-500'
                 }`}
-                style={{ width: `${ramPercent}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, ramPercent))}%` }}
               />
             </div>
           </div>
@@ -97,8 +109,19 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* ROCm Native SDPA Status */}
         <div className="flex items-center gap-1.5 text-xs text-slate-300">
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          <span className="font-medium text-[11px]">ROCm SDPA Aktívny</span>
+          {isRocmActive ? (
+            <>
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span className="font-medium text-[11px]">ROCm SDPA Aktívny</span>
+            </>
+          ) : (
+            <>
+              <AlertTriangle className="w-4 h-4 text-amber-400" />
+              <span className="font-medium text-[11px] text-amber-300" title={rocmStatus?.error || 'ROCm GPU nie je detegovaná'}>
+                CPU / Fallback Mód
+              </span>
+            </>
+          )}
         </div>
       </div>
 
