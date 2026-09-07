@@ -271,15 +271,15 @@ export async function invokeCommand<T>(command: string, args: Record<string, any
 
     case 'get_live_system_metrics': {
       const metrics: LiveSystemMetrics = {
-        host_ram_used_mb: 8420,
+        host_ram_used_mb: 0,
         host_ram_total_mb: 16384,
-        host_ram_percent: 51.4,
-        cpu_usage_percent: 24.5,
-        gpu_vram_used_mb: 4120,
-        gpu_vram_total_mb: 12288,
-        gpu_vram_percent: 33.5,
-        gpu_name: "AMD Radeon RX 7700 XT (12 GB)",
-        is_rocm_ready: true,
+        host_ram_percent: 0,
+        cpu_usage_percent: 0,
+        gpu_vram_used_mb: 0,
+        gpu_vram_total_mb: 0,
+        gpu_vram_percent: 0,
+        gpu_name: "Simulácia (bez GPU)",
+        is_rocm_ready: false,
         timestamp_ms: Date.now(),
       };
       return metrics as unknown as T;
