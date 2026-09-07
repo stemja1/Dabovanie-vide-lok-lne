@@ -353,6 +353,21 @@ os.makedirs(target_dir, exist_ok=True)
 
 print(f'>>> Začínam overovanie a sťahovanie modelu: {{model_id}}', flush=True)
 
+def fetch_expected_sha256(repo_id, filename):
+    try:
+        from huggingface_hub import hf_hub_url, get_hf_file_metadata
+        url = hf_hub_url(repo_id=repo_id, filename=filename)
+        meta = get_hf_file_metadata(url)
+        sha = getattr(meta, 'sha256', None)
+        if not sha and hasattr(meta, 'etag') and meta.etag:
+            candidate = meta.etag.strip('\"')
+            if len(candidate) == 64 and all(c in '0123456789abcdefABCDEF' for c in candidate):
+                sha = candidate
+        return sha
+    except Exception as e:
+        print(f'[UPOZORNENIE] Nepodarilo sa zistiť SHA256 pre {{repo_id}}/{{filename}}: {{e}}', file=sys.stderr)
+        return None
+
 def verify_sha256(filepath, expected_sha):
     if not expected_sha:
         return True
@@ -416,10 +431,12 @@ if model_id == 'whisper-large-v3-sk':
         print('✓ Whisper SK model stiahnutý cez HuggingFace Hub.', flush=True)
     except Exception as e:
         print(f'Skúšam priame sťahovanie konfigurácie Whisper SK: {{e}}', flush=True)
+        whisper_cfg_sha = fetch_expected_sha256('NaiveNeuron/whisper-large-v3-sk', 'config.json')
         download_file_with_progress(
             'https://huggingface.co/NaiveNeuron/whisper-large-v3-sk/resolve/main/config.json',
             os.path.join(asr_dir, 'config.json'),
-            'whisper_config.json'
+            'whisper_config.json',
+            expected_sha=whisper_cfg_sha
         )
     print('✓ Whisper SK model je pripravený.', flush=True)
 
@@ -433,35 +450,43 @@ elif model_id == 'nllb-200-distilled-600m':
         print('✓ NLLB-200 model stiahnutý cez HuggingFace Hub.', flush=True)
     except Exception as e:
         print(f'Skúšam priame sťahovanie konfigurácie NLLB-200: {{e}}', flush=True)
+        nllb_cfg_sha = fetch_expected_sha256('facebook/nllb-200-distilled-600M', 'config.json')
         download_file_with_progress(
             'https://huggingface.co/facebook/nllb-200-distilled-600M/resolve/main/config.json',
             os.path.join(mt_dir, 'config.json'),
-            'nllb_config.json'
+            'nllb_config.json',
+            expected_sha=nllb_cfg_sha
         )
     print('✓ NLLB-200 model je pripravený.', flush=True)
 
 elif model_id == 'piper-zh-huayan':
     piper_dir = os.path.join(workspace, 'models/tts/piper')
     os.makedirs(piper_dir, exist_ok=True)
+    piper_onnx_sha = fetch_expected_sha256('rhasspy/piper-voices', 'zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx')
+    piper_json_sha = fetch_expected_sha256('rhasspy/piper-voices', 'zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json')
     download_file_with_progress(
         'https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx',
         os.path.join(piper_dir, 'zh_CN-huayan-medium.onnx'),
-        'zh_CN-huayan-medium.onnx (Piper Hlas)'
+        'zh_CN-huayan-medium.onnx (Piper Hlas)',
+        expected_sha=piper_onnx_sha
     )
     download_file_with_progress(
         'https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json',
         os.path.join(piper_dir, 'zh_CN-huayan-medium.onnx.json'),
-        'zh_CN-huayan-medium.onnx.json (Konfigurácia)'
+        'zh_CN-huayan-medium.onnx.json (Konfigurácia)',
+        expected_sha=piper_json_sha
     )
     print('✓ Piper TTS čínsky hlas je stiahnutý a overený.', flush=True)
 
 elif model_id == 'kokoro-v019':
     kokoro_dir = os.path.join(workspace, 'models/tts/kokoro')
     os.makedirs(kokoro_dir, exist_ok=True)
+    kokoro_sha = fetch_expected_sha256('hexgrad/Kokoro-82M', 'kokoro-v0_19.onnx')
     download_file_with_progress(
         'https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v0_19.onnx',
         os.path.join(kokoro_dir, 'kokoro-v0_19.onnx'),
-        'kokoro-v0_19.onnx (Kokoro TTS)'
+        'kokoro-v0_19.onnx (Kokoro TTS)',
+        expected_sha=kokoro_sha
     )
     print('✓ Kokoro TTS model je pripravený.', flush=True)
 
@@ -475,19 +500,26 @@ elif model_id == 'coqui-xtts-v2':
         print('✓ Coqui XTTS-v2 checkpoint stiahnutý cez HuggingFace Hub.', flush=True)
     except Exception as e:
         print(f'Skúšam priame sťahovanie konfigurácie Coqui XTTS-v2: {{e}}', flush=True)
+        coqui_cfg_sha = fetch_expected_sha256('coqui/XTTS-v2', 'config.json')
         download_file_with_progress(
             'https://huggingface.co/coqui/XTTS-v2/resolve/main/config.json',
             os.path.join(coqui_dir, 'config.json'),
-            'coqui_xtts_v2_config.json'
+            'coqui_xtts_v2_config.json',
+            expected_sha=coqui_cfg_sha
         )
     print('✓ Coqui XTTS-v2 checkpoint je pripravený.', flush=True)
 
 elif model_id == 'latentsync-1-5':
     ls_dir = os.path.join(workspace, 'models/lipsync/latentsync')
     os.makedirs(ls_dir, exist_ok=True)
+    latentsync_sha = fetch_expected_sha256('ByteDance/LatentSync', 'latentsync_unet.pt')
     download_file_with_progress(
         'https://huggingface.co/ByteDance/LatentSync/resolve/main/latentsync_unet.pt',
         os.path.join(ls_dir, 'latentsync_unet.pt'),
+        'latentsync_unet.pt (LatentSync 1.5 UNet)',
+        expected_sha=latentsync_sha
+    )
+    print('✓ LatentSync 1.5 váhy sú pripravené.', flush=True)
         'latentsync_unet.pt (LatentSync 1.5 UNet)'
     )
     print('✓ LatentSync 1.5 váhy sú pripravené.', flush=True)

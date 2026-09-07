@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::process::{Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -257,12 +258,12 @@ impl WslExecutor {
             }
         };
 
-        let stdout_lines = stdout_task.await.unwrap_or_default();
-        let stderr_lines = stderr_task.await.unwrap_or_default();
+        let mut stdout_lines = stdout_task.await.unwrap_or_default();
+        let mut stderr_lines = stderr_task.await.unwrap_or_default();
 
         let exit_code = exit_status.code().unwrap_or(-1);
-        let full_stdout = stdout_lines.join("\n");
-        let full_stderr = stderr_lines.join("\n");
+        let full_stdout = stdout_lines.make_contiguous().join("\n");
+        let full_stderr = stderr_lines.make_contiguous().join("\n");
         let combined_logs = format!("{}\n{}", full_stdout, full_stderr);
 
         let (error_kind, remedy) = if exit_code != 0 {
@@ -295,11 +296,11 @@ impl WslExecutor {
         mut reader: R,
         stream_name: &'static str,
         sender: Option<mpsc::UnboundedSender<ProcessLogLine>>,
-    ) -> Vec<String>
+    ) -> VecDeque<String>
     where
         R: tokio::io::AsyncRead + Unpin,
     {
-        let mut collected: Vec<String> = Vec::new();
+        let mut collected: VecDeque<String> = VecDeque::new();
         let mut line_buf: Vec<u8> = Vec::new();
         let mut read_buf = [0u8; 8192];
         let mut last_was_cr = false;
@@ -347,7 +348,7 @@ impl WslExecutor {
         line_buf: &mut Vec<u8>,
         stream_name: &str,
         sender: &Option<mpsc::UnboundedSender<ProcessLogLine>>,
-        collected: &mut Vec<String>,
+        collected: &mut VecDeque<String>,
     ) {
         if line_buf.is_empty() {
             return;
@@ -371,9 +372,9 @@ impl WslExecutor {
         // Bounded collection: keep at most 1000 recent lines in RAM per stream
         const MAX_COLLECTED_LINES: usize = 1000;
         if collected.len() >= MAX_COLLECTED_LINES {
-            collected.remove(0);
+            collected.pop_front();
         }
-        collected.push(line);
+        collected.push_back(line);
     }
 
     /// Extracts numerical percentage from progress bars (e.g. `[PROGRESS:45.5%]` or `45%|...`)
