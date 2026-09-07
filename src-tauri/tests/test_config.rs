@@ -25,3 +25,24 @@ fn test_toml_roundtrip() {
     assert_eq!(parsed.lipsync_batch_size, 12);
     assert_eq!(parsed.wsl_distro, "Ubuntu-24.04");
 }
+
+#[test]
+fn test_config_validation_boundaries() {
+    let mut invalid_speed = AppConfig::default();
+    invalid_speed.tts_speed_factor = f32::NAN;
+    assert!(invalid_speed.validate().is_err());
+
+    let mut invalid_batch = AppConfig::default();
+    invalid_batch.lipsync_batch_size = 0;
+    assert!(invalid_batch.validate().is_err());
+
+    let mut invalid_distro = AppConfig::default();
+    invalid_distro.wsl_distro = "   ".to_string();
+    assert!(invalid_distro.validate().is_err());
+
+    let mut invalid_ducking = AppConfig::default();
+    invalid_ducking.ducking_level_db = 10.0;
+    assert!(invalid_ducking.validate().is_err());
+
+    assert!(AppConfig::default().validate().is_ok());
+}

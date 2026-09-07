@@ -45,7 +45,7 @@ jobs:
         run: cargo test --all-features
 
       - name: Install npm dependencies
-        run: npm install
+        run: npm ci
 
       - name: Typecheck and Build Frontend
         run: npm run build
@@ -102,7 +102,7 @@ jobs:
           grep -n "^version =" src-tauri/Cargo.toml
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build frontend
         run: npm run build

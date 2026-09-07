@@ -23,6 +23,15 @@ async fn test_orchestrator_stage_out_of_bounds_rejection() {
     assert!(res.unwrap_err().to_string().contains("mimo rozsahu"));
 }
 
+#[tokio::test]
+async fn test_orchestrator_continue_requires_paused_state() {
+    let orchestrator = PipelineOrchestrator::new();
+    let cfg = AppConfig::default();
+    let res = orchestrator.continue_after_review(cfg, None).await;
+    assert!(res.is_err(), "continue_after_review must fail when not paused");
+    assert!(res.unwrap_err().to_string().contains("nie je v stave pozastavenia"));
+}
+
 #[test]
 fn test_wsl_utf16_decoding() {
     // Plain UTF-8

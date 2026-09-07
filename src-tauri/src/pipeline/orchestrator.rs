@@ -133,13 +133,11 @@ fi
         config: AppConfig,
         log_tx: Option<mpsc::UnboundedSender<ProcessLogLine>>,
     ) -> Result<()> {
-        self.reset_cancel();
-
-        // Ensure scripts are synced to workspace directory in WSL
-        Self::ensure_scripts_synced(&config.wsl_distro, &config.workspace_dir).await;
-
         {
             let mut st = self.state.lock().await;
+            if st.is_running {
+                anyhow::bail!("Pipeline už beží. Počkajte na dokončenie alebo zrušte aktuálny proces.");
+            }
             st.is_running = true;
             st.is_paused_for_review = false;
             st.error_summary = None;
@@ -148,6 +146,11 @@ fi
                 LipsyncEngine::MuseTalk => "MuseTalk".to_string(),
             };
         }
+
+        self.reset_cancel();
+
+        // Ensure scripts are synced to workspace directory in WSL
+        Self::ensure_scripts_synced(&config.wsl_distro, &config.workspace_dir).await;
 
         let stages_count = {
             let st = self.state.lock().await;
@@ -177,6 +180,7 @@ fi
                         let mut st = self.state.lock().await;
                         st.current_stage_index = idx;
                         st.is_paused_for_review = true;
+                        st.is_running = false;
                         if let Some(s) = st.stages.get_mut(idx) {
                             s.status = StageStatus::ReviewPaused;
                             s.progress_percent = 50.0;
@@ -241,8 +245,14 @@ fi
         config: AppConfig,
         log_tx: Option<mpsc::UnboundedSender<ProcessLogLine>>,
     ) -> Result<()> {
-        {
+        let (tts_index, stages_count) = {
             let mut st = self.state.lock().await;
+            if st.is_running {
+                anyhow::bail!("Pipeline už beží.");
+            }
+            if !st.is_paused_for_review {
+                anyhow::bail!("Pipeline nie je v stave pozastavenia na kontrolu metadát.");
+            }
             st.is_paused_for_review = false;
             st.is_running = true;
             for s in &mut st.stages {
@@ -252,7 +262,13 @@ fi
                     s.completed_at_ms = Some(chrono::Utc::now().timestamp_millis());
                 }
             }
-        }
+            let tts_pos = st
+                .stages
+                .iter()
+                .position(|s| s.id == PipelineStageId::Tts)
+                .unwrap_or(4);
+            (tts_pos, st.stages.len())
+        };
 
         if let Some(ref tx) = log_tx {
             let _ = tx.send(ProcessLogLine {
@@ -265,13 +281,8 @@ fi
             });
         }
 
-        let stages_count = {
-            let st = self.state.lock().await;
-            st.stages.len()
-        };
-
-        // Resume from Stage 4 (TTS) to the end
-        for idx in 4..stages_count {
+        // Resume from TTS stage to the end
+        for idx in tts_index..stages_count {
             if self.is_cancelled.load(Ordering::SeqCst) {
                 let mut st = self.state.lock().await;
                 st.is_running = false;

@@ -220,11 +220,11 @@ export async function invokeCommand<T>(command: string, args: Record<string, any
       return await invoke<T>(command, args);
     } catch (err) {
       console.warn(`[Tauri Invoke Error on ${command}]`, err);
-      // Fall through to mock
+      throw err;
     }
   }
 
-  // Web / Simulation fallbacks
+  // Web / Simulation fallbacks (Only active outside Tauri runtime, e.g. standalone browser dev)
   switch (command) {
     case 'get_config':
       return { ...mockConfig } as unknown as T;
@@ -287,26 +287,24 @@ export async function invokeCommand<T>(command: string, args: Record<string, any
 
     case 'check_rocm_status': {
       return {
-        rocm_available: true,
-        rocm_version: 'ROCm 6.4.2 (HIP 6.2)',
-        gpu_name: 'AMD Radeon RX 7700 XT (12 GB)',
-        total_vram_mb: 12288,
-        free_vram_mb: 8168,
-        hip: true,
-        error: null,
+        rocm_available: false,
+        rocm_version: null,
+        gpu_name: null,
+        total_vram_mb: 0,
+        free_vram_mb: 0,
+        hip: false,
+        error: 'Simulácia v prehliadači (Tauri runtime nie je pripojený)',
       } as unknown as T;
     }
 
     case 'check_wsl_status': {
       return {
-        is_wsl_installed: true,
-        is_default_version_2: true,
-        distros: [
-          { name: 'Ubuntu-24.04', is_default: true, version: 2, state: 'Running' }
-        ],
-        target_distro_found: true,
-        is_target_distro_running: true,
-        kernel_version: '5.15.153.1-microsoft-standard-WSL2',
+        is_wsl_installed: false,
+        is_default_version_2: false,
+        distros: [],
+        target_distro_found: false,
+        is_target_distro_running: false,
+        kernel_version: null,
       } as unknown as T;
     }
 

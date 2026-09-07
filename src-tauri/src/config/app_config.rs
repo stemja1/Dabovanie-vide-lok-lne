@@ -138,10 +138,12 @@ impl AppConfig {
             .with_context(|| format!("Failed to read config file at {:?}", path.as_ref()))?;
         let config: AppConfig =
             toml::from_str(&content).with_context(|| "Failed to parse TOML config")?;
+        config.validate()?;
         Ok(config)
     }
 
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        self.validate()?;
         let path_ref = path.as_ref();
         if let Some(parent) = path_ref.parent() {
             fs::create_dir_all(parent)
@@ -155,10 +157,69 @@ impl AppConfig {
     }
 
     pub fn to_toml_string(&self) -> Result<String> {
+        self.validate()?;
         toml::to_string_pretty(self).context("Failed to serialize config to TOML string")
     }
 
     pub fn from_toml_string(toml_str: &str) -> Result<Self> {
-        toml::from_str(toml_str).context("Failed to parse config from TOML string")
+        let config: AppConfig =
+            toml::from_str(toml_str).context("Failed to parse config from TOML string")?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validates all configuration fields against reasonable domain boundaries.
+    pub fn validate(&self) -> Result<()> {
+        if self.wsl_distro.trim().is_empty() {
+            anyhow::bail!("Názov WSL distribúcie nesmie byť prázdny.");
+        }
+        if self.wsl_distro.contains('\0') {
+            anyhow::bail!("Názov WSL distribúcie obsahuje neplatné nulové bajty.");
+        }
+        if self.venv_path.trim().is_empty() {
+            anyhow::bail!("Cesta k virtuálnemu prostrediu nesmie byť prázdna.");
+        }
+        if self.workspace_dir.trim().is_empty() {
+            anyhow::bail!("Cesta k pracovnému adresáru nesmie byť prázdna.");
+        }
+        if self.whisper_sk_model_id.trim().is_empty() {
+            anyhow::bail!("Identifikátor ASR modelu nesmie byť prázdny.");
+        }
+        if self.mt_model_id.trim().is_empty() {
+            anyhow::bail!("Identifikátor prekladového modelu nesmie byť prázdny.");
+        }
+        if self.source_lang.trim().is_empty() || self.target_lang.trim().is_empty() {
+            anyhow::bail!("Kódy jazykov nesmú byť prázdne.");
+        }
+        if self.tts_voice.trim().is_empty() {
+            anyhow::bail!("Názov TTS hlasu nesmie byť prázdny.");
+        }
+        if self.tts_speed_factor.is_nan()
+            || self.tts_speed_factor.is_infinite()
+            || self.tts_speed_factor < 0.25
+            || self.tts_speed_factor > 4.0
+        {
+            anyhow::bail!(
+                "TTS faktor rýchlosti ({}) musí byť v rozmedzí 0.25 až 4.0.",
+                self.tts_speed_factor
+            );
+        }
+        if self.lipsync_batch_size == 0 || self.lipsync_batch_size > 64 {
+            anyhow::bail!(
+                "Veľkosť dávky pre lip-sync ({}) musí byť v rozmedzí 1 až 64.",
+                self.lipsync_batch_size
+            );
+        }
+        if self.ducking_level_db.is_nan()
+            || self.ducking_level_db.is_infinite()
+            || self.ducking_level_db < -60.0
+            || self.ducking_level_db > 0.0
+        {
+            anyhow::bail!(
+                "Úroveň stlmenia hudby (ducking: {} dB) musí byť v rozmedzí -60.0 až 0.0 dB.",
+                self.ducking_level_db
+            );
+        }
+        Ok(())
     }
 }

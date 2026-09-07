@@ -52,12 +52,17 @@ def run_mux(input_video: str, output_video: str, workspace: str, meta_path: str,
     print("[PROGRESS:35.0%]")
 
     # 2. Mix audio with ducking and mux final video
-    print(f"[FFmpeg] Miešam audio s duckingom ({ducking_db} dB) a spájam s videom...")
+    bg_vol = max(0.0, min(1.0, 10.0 ** (ducking_db / 20.0)))
+    print(f"[FFmpeg] Miešam audio s duckingom ({ducking_db} dB -> lineárny koeficient {bg_vol:.3f}) a spájam s videom...")
     
+    out_dir = os.path.dirname(os.path.abspath(output_video))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
     # Check if original audio exists for ducking mix
     if os.path.exists(orig_audio) and os.path.exists(dubbed_speech):
         # Audio filter: duck original audio volume during dubbed voice
-        filter_complex = f"[0:a]volume=0.25[bg];[1:a]volume=1.0[voice];[bg][voice]amix=inputs=2:duration=longest[aout]"
+        filter_complex = f"[0:a]volume={bg_vol:.4f}[bg];[1:a]volume=1.0[voice];[bg][voice]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
         cmd = [
             "ffmpeg", "-y",
             "-i", orig_audio,

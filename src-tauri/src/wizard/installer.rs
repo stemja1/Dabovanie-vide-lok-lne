@@ -343,7 +343,7 @@ if [ ! -f "$PY" ]; then
 fi
 
 "$PY" -c "
-import os, sys, requests, shutil
+import os, sys, requests, shutil, hashlib
 
 sys.stdout.reconfigure(line_buffering=True)
 model_id = '{2}'
@@ -353,17 +353,42 @@ os.makedirs(target_dir, exist_ok=True)
 
 print(f'>>> Začínam overovanie a sťahovanie modelu: {{model_id}}', flush=True)
 
-def download_file_with_progress(url, dest_path, desc_name):
+def verify_sha256(filepath, expected_sha):
+    if not expected_sha:
+        return True
+    h = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            h.update(chunk)
+    actual = h.hexdigest()
+    if actual.lower() != expected_sha.lower():
+        print(f'Nesprávny SHA256 kontrolný súčet pre {{filepath}}: očakávaný {{expected_sha}}, skutočný {{actual}}', file=sys.stderr)
+        return False
+    return True
+
+def download_file_with_progress(url, dest_path, desc_name, expected_sha=None):
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
-        print(f'✓ Súbor {{desc_name}} už existuje ({{os.path.getsize(dest_path) // 1024}} KB).', flush=True)
-        return
+        if verify_sha256(dest_path, expected_sha):
+            print(f'✓ Súbor {{desc_name}} už existuje ({{os.path.getsize(dest_path) // 1024}} KB).', flush=True)
+            return
+        else:
+            print(f'Súbor {{desc_name}} je poškodený. Sťahujem znova...', flush=True)
+            try:
+                os.remove(dest_path)
+            except Exception:
+                pass
+
+    temp_path = dest_path + '.part'
     print(f'Sťahujem {{desc_name}} z {{url}}...', flush=True)
     r = requests.get(url, stream=True, timeout=60)
     r.raise_for_status()
     total = int(r.headers.get('content-length', 0))
     downloaded = 0
-    with open(dest_path, 'wb') as f:
+    with open(temp_path, 'wb') as f:
         for chunk in r.iter_content(chunk_size=65536):
             if chunk:
                 f.write(chunk)
@@ -372,7 +397,14 @@ def download_file_with_progress(url, dest_path, desc_name):
                     pct = (downloaded / total) * 100
                     if downloaded % (512 * 1024) < 65536 or downloaded >= total:
                         print(f'[PROGRESS:{{pct:.1f}}%] {{desc_name}}: {{downloaded // (1024*1024)}} MB / {{total // (1024*1024)}} MB ({{pct:.1f}}%)', flush=True)
-    print(f'✓ Súbor {{desc_name}} úspešne stiahnutý.', flush=True)
+
+    if expected_sha and not verify_sha256(temp_path, expected_sha):
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise ValueError(f'Chyba integrity: Kontrolný súčet SHA256 pre {{desc_name}} nesedí!')
+
+    os.replace(temp_path, dest_path)
+    print(f'✓ Súbor {{desc_name}} úspešne stiahnutý a overený.', flush=True)
 
 if model_id == 'whisper-large-v3-sk':
     asr_dir = os.path.join(workspace, 'models/asr/whisper-large-v3-sk')

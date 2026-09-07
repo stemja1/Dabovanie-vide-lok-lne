@@ -188,6 +188,9 @@ impl WslExecutor {
             if let Some(ref flag) = cancel_flag {
                 if flag.load(Ordering::SeqCst) {
                     let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    stdout_task.abort();
+                    stderr_task.abort();
                     if let Some(ref tx) = log_sender {
                         let _ = tx.send(ProcessLogLine {
                             stream: "system".to_string(),
@@ -215,6 +218,9 @@ impl WslExecutor {
             if let Some(max_dur) = timeout_duration {
                 if start_time.elapsed() >= max_dur {
                     let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    stdout_task.abort();
+                    stderr_task.abort();
                     if let Some(ref tx) = log_sender {
                         let _ = tx.send(ProcessLogLine {
                             stream: "system".to_string(),
@@ -360,6 +366,12 @@ impl WslExecutor {
                 step_tag: None,
             };
             let _ = tx.send(log);
+        }
+
+        // Bounded collection: keep at most 1000 recent lines in RAM per stream
+        const MAX_COLLECTED_LINES: usize = 1000;
+        if collected.len() >= MAX_COLLECTED_LINES {
+            collected.remove(0);
         }
         collected.push(line);
     }
