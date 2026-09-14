@@ -337,6 +337,18 @@ export PYTHONUNBUFFERED=1
 {1}
 export VENV WORKSPACE
 
+mkdir -p "$WORKSPACE" "$WORKSPACE/models"
+
+if [ ! -f "$VENV/bin/python" ]; then
+    echo ">>> Inicializujem virtuálne prostredie v $VENV..."
+    python3 -m venv "$VENV" || python3 -m venv --without-pip "$VENV"
+    curl -sS https://bootstrap.pypa.io/get-pip.py | "$VENV/bin/python" 2>/dev/null || true
+fi
+
+if [ -f "$VENV/bin/pip" ]; then
+    "$VENV/bin/python" -c "import requests, huggingface_hub" 2>/dev/null || "$VENV/bin/pip" install requests huggingface_hub tqdm
+fi
+
 PY="$VENV/bin/python"
 if [ ! -f "$PY" ]; then
     PY="python3"
