@@ -11,6 +11,230 @@ import sys
 import json
 import torch
 
+
+def _asr_result_to_whisper_format(segments):
+    """Normalises backend output into the `{"chunks": [...]}` shape used below.
+
+    Both backends report (start, end, text) triples per segment; the transformers
+    path additionally reports per-word timestamps, which we keep when present so
+    the metadata editor still has word-level timing for Slovak.
+    """
+    chunks = []
+    for seg in segments:
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(seg.get("start") or 0.0)
+        end = float(seg.get("end") or (start + 0.5))
+        chunk = {"text": text, "timestamp": (start, end)}
+        words = seg.get("words")
+        if words:
+            chunk["words"] = [
+                {
+                    "word": (w.get("word") or w.get("text") or "").strip(),
+                    "start": float(w.get("start") or start),
+                    "end": float(w.get("end") or end),
+                }
+                for w in words
+                if (w.get("word") or w.get("text"))
+            ]
+        chunks.append(chunk)
+    return {"chunks": chunks}
+
+
+def _run_faster_whisper(audio_path, model_to_load, target_device, local_model_path, model_id):
+    """Runs the CTranslate2 `faster-whisper` backend."""
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as e:
+        raise RuntimeError(
+            "ASR engine 'faster_whisper' vyžaduje balík 'faster-whisper'. "
+            "Nainštalujte ho vo venv (`pip install faster-whisper`) "
+            "alebo v Settings prepnite engine na Whisper-SK."
+        ) from e
+
+    # CTranslate2 needs its own converted weights; only reuse the local folder
+    # when it actually contains a CTranslate2 model, otherwise resolve from the
+    # HuggingFace id at the correct size ("large-v3" -> "large-v3").
+    compute_type = "float16" if target_device.startswith("cuda") else "int8"
+    size_hint = None
+    if os.path.isdir(local_model_path) and os.path.exists(
+        os.path.join(local_model_path, "model.bin")
+    ):
+        size_hint = local_model_path
+    else:
+        size_hint = "large-v3"
+
+    print(f"[ASR] Načítavam faster-whisper model ({size_hint}, {compute_type})...")
+    try:
+        model = WhisperModel(
+            size_hint, device=target_device.split(":")[0], compute_type=compute_type
+        )
+    except Exception:
+        # CPU ROCm builds can reject the GPU device; retry on CPU rather than
+        # failing the whole stage.
+        print("[ASR] GPU inicializácia zlyhala, skúšam CPU fallback...", file=sys.stderr)
+        model = WhisperModel(size_hint, device="cpu", compute_type="int8")
+
+    segments, _info = model.transcribe(
+        audio_path,
+        language="sk",
+        task="transcribe",
+        word_timestamps=True,
+        vad_filter=True,
+    )
+    return _asr_result_to_whisper_format(list(segments))
+
+
+def _run_transformers_whisper(audio_path, model_to_load, target_device):
+    """Runs the `transformers` Whisper pipeline backend (default)."""
+    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+
+    print(f"[ASR] Načítavam HuggingFace pipeline z: {model_to_load}...")
+
+    torch_dtype = torch.float16 if target_device.startswith("cuda") else torch.float32
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        model_to_load,
+        torch_dtype=torch_dtype,
+        low_cpu_mem_usage=True,
+        use_safetensors=True,
+    ).to(target_device)
+
+    processor = AutoProcessor.from_pretrained(model_to_load)
+
+    pipe = pipeline(
+        "automatic-speech-recognition",
+        model=model,
+        tokenizer=processor.tokenizer,
+        feature_extractor=processor.feature_extractor,
+        max_new_tokens=440,
+        chunk_length_s=30,
+        batch_size=8,
+        return_timestamps="word",
+        torch_dtype=torch_dtype,
+        device=target_device,
+    )
+
+    print(f"[ASR] Spúšťam inferenciu slovenskej reči na zvuku: {audio_path}")
+    raw = pipe(audio_path, generate_kwargs={"language": "slovak", "task": "transcribe"})
+
+    # The word-level pipeline returns chunks carrying `timestamp` only; the
+    # sentence-level grouping below needs a stable (start, end) per chunk.
+    return {"chunks": raw.get("chunks", [])}
+
+
+# Whisper emits punctuation as a separate token ("Dobrý", "deň", ",", "vitaj"),
+# so naively joining tokens with a space yields "Dobrý deň , vitaj". Reattach
+# punctuation to the preceding token to keep the transcript readable and to give
+# the MT model a well-formed sentence.
+_NO_SPACE_BEFORE = set(",.!?;:%…)]}»”\"'’")
+_NO_SPACE_AFTER = set("([{«“\"'")
+
+
+def _join_tokens(tokens):
+    out = ""
+    for tok in tokens:
+        if not out:
+            out = tok
+        elif tok and tok[0] in _NO_SPACE_BEFORE:
+            out += tok
+        elif out and out[-1] in _NO_SPACE_AFTER:
+            out += tok
+        else:
+            out += " " + tok
+    return out.strip()
+
+
+def _group_chunks_into_utterances(chunks, max_tokens=12):
+    """Groups ASR chunks into utterance-sized segments.
+
+    A chunk may be a whole sentence (faster-whisper backend) or a single word
+    (transformers word-timestamp backend), so both are handled: we accumulate
+    until sentence-final punctuation or the token budget is reached, and record
+    word-level timing whenever the backend provided it.
+    """
+    utterances = []
+    current_words = []
+    current_tokens = []
+    utt_start = None
+    utt_idx = 1
+
+    def flush(end_time, confidence):
+        nonlocal current_words, current_tokens, utt_start, utt_idx
+        text = _join_tokens(current_tokens)
+        if not text:
+            current_words = []
+            current_tokens = []
+            utt_start = None
+            return
+        start = utt_start if utt_start is not None else 0.0
+        end = max(end_time, start + 0.2)
+        utterances.append({
+            "id": f"utt_{utt_idx:03d}",
+            "start_time": round(start, 2),
+            "end_time": round(end, 2),
+            "duration": round(end - start, 2),
+            "speaker_id": "SPEAKER_00",
+            "slovak_text": text,
+            "chinese_text": "",
+            "target_audio_file": f"audio_segments/utt_{utt_idx:03d}.wav",
+            "speed_factor": 1.0,
+            "is_edited": False,
+            "confidence": confidence,
+            "words": current_words,
+        })
+        utt_idx += 1
+        current_words = []
+        current_tokens = []
+        utt_start = None
+
+    for chunk in chunks:
+        text = (chunk.get("text") or "").strip()
+        if not text:
+            continue
+        ts = chunk.get("timestamp") or (0.0, 0.0)
+        start = float(ts[0]) if ts[0] is not None else 0.0
+        end = float(ts[1]) if ts[1] is not None else (start + 0.5)
+
+        if utt_start is None:
+            # Use the real first-word start instead of 0.0, otherwise every
+            # utterance inherited a spurious leading gap and the dub drifted
+            # earlier than the original speech.
+            utt_start = start
+
+        # Prefer backend-provided per-word timing when available. The
+        # transformers word-timestamp pipeline does not populate `words`, so in
+        # that case the chunk text itself is the unit to record.
+        word_entries = [w for w in (chunk.get("words") or []) if (w.get("word") or "").strip()]
+        if word_entries:
+            for w in word_entries:
+                wtext = w["word"].strip()
+                current_words.append({
+                    "word": wtext,
+                    "start": round(float(w.get("start") or start), 2),
+                    "end": round(float(w.get("end") or end), 2),
+                    "score": 0.98,
+                })
+                current_tokens.append(wtext)
+        else:
+            current_words.append({
+                "word": text,
+                "start": round(start, 2),
+                "end": round(end, 2),
+                "score": 0.98,
+            })
+            current_tokens.append(text)
+
+        if text.endswith((".", "?", "!")) or len(current_tokens) >= max_tokens:
+            flush(end, 0.98)
+
+    if current_tokens:
+        last_end = current_words[-1]["end"] if current_words else (utt_start or 0.0) + 2.0
+        flush(float(last_end), 0.97)
+
+    return utterances
+
+
 def run_asr(input_video: str, workspace: str, engine: str, device_type: str, model_id: str, simulate: bool = False):
     print(f"=== Fáza 2: Slovenský ASR prepis ({model_id}) ===")
     
@@ -82,105 +306,32 @@ def run_asr(input_video: str, workspace: str, engine: str, device_type: str, mod
 
     target_device = "cuda:0" if (device_type == "rocm" and torch.cuda.is_available()) else "cpu"
     print(f"[ASR] Inicializujem model na zariadení: {target_device} (Torch HIP: {getattr(torch.version, 'hip', 'N/A')})")
-    print("[PROGRESS:15.0%]")
+    print("[PROGRESS:10.0%]")
 
     # Check for local workspace model path first
     local_model_path = os.path.join(workspace, "models", "asr", "whisper-large-v3-sk")
     model_to_load = local_model_path if os.path.isdir(local_model_path) else model_id
 
-    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
-    print(f"[ASR] Načítavam HuggingFace pipeline z: {model_to_load}...")
-    
-    torch_dtype = torch.float16 if target_device.startswith("cuda") else torch.float32
-    model = AutoModelForSpeechSeq2Seq.from_pretrained(
-        model_to_load,
-        torch_dtype=torch_dtype,
-        low_cpu_mem_usage=True,
-        use_safetensors=True
-    ).to(target_device)
-    
-    processor = AutoProcessor.from_pretrained(model_to_load)
+    # `faster_whisper` is a CTranslate2 runtime with its own model format, so it
+    # cannot reuse the transformers `AutoModelForSpeechSeq2Seq` path below. The
+    # engine argument used to be accepted and then ignored entirely, which made
+    # the Settings dropdown a no-op.
+    if engine == "faster_whisper":
+        result = _run_faster_whisper(
+            audio_path, model_to_load, target_device, local_model_path, model_id
+        )
+    else:
+        result = _run_transformers_whisper(audio_path, model_to_load, target_device)
 
-    pipe = pipeline(
-        "automatic-speech-recognition",
-        model=model,
-        tokenizer=processor.tokenizer,
-        feature_extractor=processor.feature_extractor,
-        max_new_tokens=128,
-        chunk_length_s=30,
-        batch_size=8,
-        return_timestamps="word",
-        torch_dtype=torch_dtype,
-        device=target_device,
-    )
-
-    print("[PROGRESS:35.0%]")
-    print(f"[ASR] Spúšťam inferenciu slovenskej reči na zvuku: {audio_path}")
-    result = pipe(audio_path, generate_kwargs={"language": "slovak", "task": "transcribe"})
     print("[PROGRESS:85.0%]")
 
-    # Process chunks into structured utterances
-    utterances = []
-    chunks = result.get("chunks", [])
-    if chunks:
-        current_utt_words = []
-        current_utt_text = []
-        utt_start = 0.0
-        utt_idx = 1
+    utterances = _group_chunks_into_utterances(result.get("chunks", []))
 
-        for chunk in chunks:
-            text = chunk.get("text", "").strip()
-            ts = chunk.get("timestamp") or (0.0, 0.0)
-            start = float(ts[0]) if ts[0] is not None else 0.0
-            end = float(ts[1]) if ts[1] is not None else (start + 0.5)
-
-            current_utt_words.append({
-                "word": text,
-                "start": round(start, 2),
-                "end": round(end, 2),
-                "score": 0.98
-            })
-            current_utt_text.append(text)
-
-            # Split on sentence punctuation or chunk length
-            if text.endswith(('.', '?', '!')) or len(current_utt_text) >= 12:
-                full_txt = " ".join(current_utt_text).strip()
-                utterances.append({
-                    "id": f"utt_{utt_idx:03d}",
-                    "start_time": round(utt_start, 2),
-                    "end_time": round(end, 2),
-                    "duration": round(end - utt_start, 2),
-                    "speaker_id": "SPEAKER_00",
-                    "slovak_text": full_txt,
-                    "chinese_text": "",
-                    "target_audio_file": f"audio_segments/utt_{utt_idx:03d}.wav",
-                    "speed_factor": 1.0,
-                    "is_edited": False,
-                    "confidence": 0.98,
-                    "words": current_utt_words
-                })
-                utt_idx += 1
-                current_utt_words = []
-                current_utt_text = []
-                utt_start = round(end + 0.1, 2)
-
-        if current_utt_text:
-            full_txt = " ".join(current_utt_text).strip()
-            end_t = current_utt_words[-1]["end"] if current_utt_words else (utt_start + 2.0)
-            utterances.append({
-                "id": f"utt_{utt_idx:03d}",
-                "start_time": round(utt_start, 2),
-                "end_time": round(end_t, 2),
-                "duration": round(end_t - utt_start, 2),
-                "speaker_id": "SPEAKER_00",
-                "slovak_text": full_txt,
-                "chinese_text": "",
-                "target_audio_file": f"audio_segments/utt_{utt_idx:03d}.wav",
-                "speed_factor": 1.0,
-                "is_edited": False,
-                "confidence": 0.97,
-                "words": current_utt_words
-            })
+    if not utterances:
+        raise RuntimeError(
+            "ASR nevrátilo žiadne segmenty. Skontrolujte, či vstupné video obsahuje "
+            "rozpoznateľnú reč a či zvolený ASR model podporuje slovenčinu."
+        )
 
     # Save intermediate JSON
     raw_meta_path = os.path.join(workspace, "raw_asr_metadata.json")

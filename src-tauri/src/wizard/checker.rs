@@ -59,6 +59,28 @@ pub(crate) fn parse_repos(stdout: &str) -> (bool, bool) {
     )
 }
 
+/// Builds the shell command that probes for the two lip-sync checkouts.
+///
+/// The directory names are returned separately so they can be asserted directly
+/// in tests, instead of asserting on a rendered shell string. The names must
+/// match what `WizardInstaller::setup_lipsync_repos` clones and what
+/// `stage_5_lipsync.py` executes: the WSL filesystem is case-sensitive, so
+/// `latentsync` and `LatentSync` are different directories.
+pub(crate) fn build_repos_check_cmd(ws_setup: &str) -> String {
+    format!(
+        r#"{0} test -d "$WORKSPACE/{1}" && echo "LATENTSYNC_OK" || echo "LATENTSYNC_MISSING"; test -d "$WORKSPACE/{2}" && echo "MUSETALK_OK" || echo "MUSETALK_MISSING";"#,
+        ws_setup,
+        LATENTSYNC_DIR_NAME,
+        MUSETALK_DIR_NAME,
+    )
+}
+
+/// Directory name used for the LatentSync checkout. Shared with the installer
+/// so the two cannot drift apart again.
+pub(crate) const LATENTSYNC_DIR_NAME: &str = "LatentSync";
+/// Directory name used for the MuseTalk checkout.
+pub(crate) const MUSETALK_DIR_NAME: &str = "MuseTalk";
+
 /// Parses the merged "MODEL_OK:<id>" / "MODEL_MISSING:<id>" output into a
 /// map from model id to installed-bool. No I/O — pure string parsing.
 pub(crate) fn parse_model_results(stdout: &str) -> HashMap<String, bool> {
@@ -178,10 +200,11 @@ except Exception as e:
             "WORKSPACE",
             workspace_dir.trim_end_matches('/'),
         );
-        let check_repos_cmd = format!(
-            r#"{0} test -d "$WORKSPACE/latentsync" && echo "LATENTSYNC_OK" || echo "LATENTSYNC_MISSING"; test -d "$WORKSPACE/musetalk" && echo "MUSETALK_OK" || echo "MUSETALK_MISSING";"#,
-            ws_setup
-        );
+        // The directory names must match what `setup_lipsync_repos` clones and
+        // what `stage_5_lipsync.py` executes. This check used to probe lowercase
+        // `latentsync`/`musetalk` while both of those used the capitalised names,
+        // so diagnostics reported both repos as missing after a good install.
+        let check_repos_cmd = build_repos_check_cmd(&ws_setup);
 
         // 5. Prepare Merged AI Models Check Command (1 single command for all models)
         let all_models = ModelsManifest::get_all_models();
@@ -523,6 +546,48 @@ mod tests {
     #[test]
     fn parse_repos_empty() {
         assert_eq!(parse_repos(""), (false, false));
+    }
+
+    /// The repo probe must use the same capitalised directory names the installer
+    /// creates and `stage_5_lipsync.py` executes. The WSL filesystem is
+    /// case-sensitive, so a lowercase probe made a correct install look broken in
+    /// the diagnostics panel.
+    #[test]
+    fn repo_check_probes_capitalised_directories() {
+        let cmd = build_repos_check_cmd("WORKSPACE='~/ws';");
+        assert!(
+            cmd.contains(r#"test -d "$WORKSPACE/LatentSync""#),
+            "probe must use the capitalised LatentSync directory: {}",
+            cmd
+        );
+        assert!(
+            cmd.contains(r#"test -d "$WORKSPACE/MuseTalk""#),
+            "probe must use the capitalised MuseTalk directory: {}",
+            cmd
+        );
+        assert!(
+            !cmd.contains(r#"test -d "$WORKSPACE/latentsync""#),
+            "probe must not use the lowercase latentsync directory: {}",
+            cmd
+        );
+        assert!(
+            !cmd.contains(r#"test -d "$WORKSPACE/musetalk""#),
+            "probe must not use the lowercase musetalk directory: {}",
+            cmd
+        );
+    }
+
+    /// The probe must still emit the markers `parse_repos` looks for, otherwise
+    /// the parse helpers would always report the repos as missing.
+    #[test]
+    fn repo_check_emits_parsed_markers() {
+        let cmd = build_repos_check_cmd("WORKSPACE='~/ws';");
+        assert!(cmd.contains("LATENTSYNC_OK"));
+        assert!(cmd.contains("MUSETALK_OK"));
+        assert_eq!(
+            parse_repos("LATENTSYNC_OK\nMUSETALK_OK\n"),
+            (true, true)
+        );
     }
 
     #[test]

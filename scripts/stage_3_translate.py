@@ -6,6 +6,7 @@ Vytvára kompletný utterance_metadata.json pripravený na kontrolu v GUI.
 """
 
 import argparse
+import datetime
 import os
 import sys
 import json
@@ -49,6 +50,7 @@ def run_translation(workspace: str, meta_path: str, model_id: str, src_lang: str
         model = AutoModelForSeq2SeqLM.from_pretrained(model_to_load).to(device)
         model.eval()
 
+        translated_count = 0
         for i, utt in enumerate(utterances):
             sk_text = utt.get("slovak_text", "").strip()
             if not sk_text:
@@ -64,22 +66,40 @@ def run_translation(workspace: str, meta_path: str, model_id: str, src_lang: str
                     gen_kwargs["forced_bos_token_id"] = forced_bos_token_id
                 translated_tokens = model.generate(**inputs, **gen_kwargs)
 
-            zh_text = tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
+            zh_text = tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0].strip()
             utt["chinese_text"] = zh_text
-            
+            translated_count += 1
+
             pct = 20.0 + (float(i + 1) / float(total)) * 75.0
             print(f"[PROGRESS:{pct:.1f}%]")
             print(f"[{i+1}/{total}] SK: {sk_text} -> ZH: {zh_text}")
 
+        if translated_count == 0:
+            raise RuntimeError(
+                "NLLB nepreložil ani jednu vetu. Skontrolujte podporované jazykové kódy "
+                "v Settings (source_lang='slk_Latn', target_lang='zho_Hans')."
+            )
+
     # Write final utterance_metadata.json
+    #
+    # `total_duration` used to be the sum of segment durations, which ignores the
+    # silence between segments and is shorter than the video. Stage 4 sized the
+    # master dubbed track from this value, so trailing utterances fell outside the
+    # buffer and were dropped. The Rust `recalculate_timings` uses the latest
+    # end_time, so match that here.
+    total_duration = max(
+        [float(u.get("end_time", 0.0) or 0.0) for u in utterances] or [0.0]
+    )
     final_doc = {
         "video_source": data.get("video_source", "input.mp4"),
-        "total_duration": sum(u.get("duration", 0.0) for u in utterances),
+        "total_duration": round(total_duration, 2),
         "sample_rate": 24000,
         "source_language": src_lang,
         "target_language": tgt_lang,
         "utterances": utterances,
-        "generated_at_iso": "2026-09-06T12:00:00Z",
+        "generated_at_iso": datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
         "is_verified_by_user": False
     }
 

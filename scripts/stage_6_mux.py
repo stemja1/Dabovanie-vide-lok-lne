@@ -13,10 +13,17 @@ import json
 import subprocess
 
 def format_timestamp_srt(seconds: float) -> str:
-    hrs = int(seconds // 3600)
-    mins = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int(round((seconds - int(seconds)) * 1000))
+    """Formats a timestamp as an SRT cue time.
+
+    Rounding is applied to the whole value first, then decomposed. Rounding each
+    field independently (as this used to do) produced `00:00:03,1000` for
+    fractional values just below a second boundary, which is not a valid SRT
+    timestamp and is rejected by most players.
+    """
+    total_ms = int(round(max(0.0, float(seconds)) * 1000.0))
+    hrs, remainder = divmod(total_ms, 3_600_000)
+    mins, remainder = divmod(remainder, 60_000)
+    secs, millis = divmod(remainder, 1000)
     return f"{hrs:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
 def generate_subtitles(meta_path: str, srt_out_path: str):
@@ -26,14 +33,22 @@ def generate_subtitles(meta_path: str, srt_out_path: str):
         doc = json.load(f)
 
     utterances = doc.get("utterances", [])
+    written = 0
     with open(srt_out_path, "w", encoding="utf-8") as f:
-        for idx, utt in enumerate(utterances, start=1):
-            st = format_timestamp_srt(utt.get("start_time", 0.0))
-            et = format_timestamp_srt(utt.get("end_time", 3.0))
-            zh = utt.get("chinese_text", "")
-            sk = utt.get("slovak_text", "")
-            f.write(f"{idx}\n{st} --> {et}\n{zh}\n{sk}\n\n")
-    print(f"[Mux] Titulky vygenerované -> {srt_out_path}")
+        for utt in utterances:
+            zh = (utt.get("chinese_text") or "").strip()
+            sk = (utt.get("slovak_text") or "").strip()
+            if not zh and not sk:
+                continue
+            start = max(0.0, float(utt.get("start_time", 0.0) or 0.0))
+            end = max(start + 0.2, float(utt.get("end_time", start + 1.0) or (start + 1.0)))
+            written += 1
+            f.write(
+                f"{written}\n"
+                f"{format_timestamp_srt(start)} --> {format_timestamp_srt(end)}\n"
+                f"{zh}\n{sk}\n\n"
+            )
+    print(f"[Mux] Titulky vygenerované -> {srt_out_path} ({written} cues)")
 
 def run_mux(input_video: str, output_video: str, workspace: str, meta_path: str, ducking_db: float):
     print(f"=== Fáza 6: Záverečný Muxing (Výstup: {output_video}) ===")
@@ -44,8 +59,20 @@ def run_mux(input_video: str, output_video: str, workspace: str, meta_path: str,
     dubbed_speech = os.path.join(workspace, "audio", "dubbed_speech_track.wav")
     srt_file = os.path.join(workspace, "subtitles_zh_sk.srt")
 
+    # A missing lip-sync output means stage 5 did not really run. Falling back to
+    # the undubbed input video here produced a plausible-looking MP4 with no
+    # dubbing at all and no warning, so treat it as a hard failure instead.
     if not os.path.exists(lipsync_video):
-        lipsync_video = input_video
+        raise FileNotFoundError(
+            f"Výstup lip-sync fázy neexistuje: {lipsync_video}. "
+            "Spustite najprv 6. fázu (Lip-Sync); bez nej by výsledok neobsahoval dabing."
+        )
+
+    if not os.path.exists(dubbed_speech):
+        raise FileNotFoundError(
+            f"Výstup TTS fázy neexistuje: {dubbed_speech}. "
+            "Bez vygenerovanej reči by výsledok neobsahoval dabing."
+        )
 
     # 1. Generate bilingual subtitles
     generate_subtitles(meta_path, srt_file)
@@ -59,10 +86,23 @@ def run_mux(input_video: str, output_video: str, workspace: str, meta_path: str,
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    # Check if original audio exists for ducking mix
-    if os.path.exists(orig_audio) and os.path.exists(dubbed_speech):
-        # Audio filter: duck original audio volume during dubbed voice
-        filter_complex = f"[0:a]volume={bg_vol:.4f}[bg];[1:a]volume=1.0[voice];[bg][voice]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
+    if os.path.exists(orig_audio):
+        # Duck the original track under the dubbed voice.
+        #
+        # `amix=duration=first` pins the mix to the length of the original audio
+        # so the output is not cut short; the previous `duration=longest` combined
+        # with `-shortest` truncated the result to whichever input was shorter
+        # (frequently the dubbed track), silently dropping the end of the video.
+        #
+        # `apad` on the voice track pads it to the background length so the mix
+        # never runs out of audio early, and the whole graph is anchored to the
+        # video with `amix=duration=longest` on a `apad`-ed original plus
+        # `-shortest`, which keeps the result exactly as long as the video.
+        filter_complex = (
+            f"[0:a]volume={bg_vol:.4f}[bg];"
+            f"[1:a]aresample=24000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1.0[voice];"
+            f"[bg][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
+        )
         cmd = [
             "ffmpeg", "-y",
             "-i", orig_audio,
@@ -77,14 +117,30 @@ def run_mux(input_video: str, output_video: str, workspace: str, meta_path: str,
             output_video
         ]
     else:
+        # No original track to duck, so keep the dubbed voice alone. The
+        # lip-sync output's own audio is deliberately not reused: in production
+        # it is a low-quality intermediate, and the mastered dubbed track is what
+        # should end up in the deliverable.
         cmd = [
             "ffmpeg", "-y",
             "-i", lipsync_video,
-            "-c:v", "copy", "-c:a", "aac",
+            "-i", dubbed_speech,
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "256k",
+            "-shortest",
             output_video
         ]
 
-    subprocess.run(cmd, check=True)
+    res = subprocess.run(cmd, capture_output=True)
+    if res.returncode != 0:
+        raise RuntimeError(
+            "FFmpeg muxing zlyhal: " + res.stderr.decode("utf-8", errors="replace")[-2000:]
+        )
+
+    if not os.path.exists(output_video) or os.path.getsize(output_video) == 0:
+        raise RuntimeError(f"Muxing nevytvoril výstupný súbor: {output_video}")
     print("[PROGRESS:100.0%]")
     print(f"=== Fáza 6: Výsledné video úspešne vytvorené -> {output_video} ===")
 

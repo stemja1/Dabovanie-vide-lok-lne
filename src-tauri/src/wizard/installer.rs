@@ -231,14 +231,8 @@ echo ">>> Inštalujem dabingové knižnice (transformers, accelerate, piper-tts,
 pip install transformers accelerate sentencepiece sacremoses piper-tts kokoro-onnx soundfile librosa scipy pydub ffmpeg-python tqdm requests huggingface_hub
 pip install "open_dubbing[coqui]" --no-deps || true
 
-mkdir -p "$WORKSPACE/scripts"
-for cand in /mnt/c/Dabovanie-vide-lok-lne-main/scripts /mnt/c/*/Dabovanie-vide-lok-lne*/scripts /mnt/c/*/*/scripts; do
-    if [ -d "$cand" ] && [ -f "$cand/stage_1_demux.py" ]; then
-        cp -ru "$cand"/*.py "$WORKSPACE/scripts/" 2>/dev/null || true
-        break
-    fi
-done
 echo ">>> Python & ROCm prostredie je úspešne nakonfigurované."
+echo ">>> (Python skripty sa synchronizujú z aplikačných resources pri štarte pipeline.)"
 "#,
             venv_setup, ws_setup
         );
@@ -281,22 +275,28 @@ cd "$WORKSPACE"
 source "$VENV/bin/activate" 2>/dev/null || true
 
 # 1. LatentSync 1.5 (Use LatentSync v1.5 for 6.5-8GB VRAM constraint)
-if [ ! -d "$WORKSPACE/latentsync" ]; then
+# Clone into the capitalised directory names that stage_5_lipsync.py looks for.
+# The filesystem inside WSL is case-sensitive, so a lowercase clone path would
+# never be found and stage 5 would always fail with
+# "Modul latentsync ani inferenčný skript neboli nájdené."
+LATENTSYNC_DIR="LatentSync"
+MUSETALK_DIR="MuseTalk"
+
+if [ ! -d "$WORKSPACE/$LATENTSYNC_DIR" ]; then
     echo ">>> Klonujem repozitár LatentSync (v1.5)..."
-    git clone https://github.com/bytedance/LatentSync.git "$WORKSPACE/latentsync"
-    cd "$WORKSPACE/latentsync"
+    git clone --depth 1 https://github.com/bytedance/LatentSync.git "$WORKSPACE/$LATENTSYNC_DIR"
+    cd "$WORKSPACE/$LATENTSYNC_DIR"
     pip install -r requirements.txt || true
-    pip install diffusers omegaconf einops decord face-alignment mediapipe
+    pip install diffusers omegaconf einops face-alignment
 fi
 
 # 2. MuseTalk (Ultra-lightweight fallback engine for ROCm)
 cd "$WORKSPACE"
-if [ ! -d "$WORKSPACE/musetalk" ]; then
+if [ ! -d "$WORKSPACE/$MUSETALK_DIR" ]; then
     echo ">>> Klonujem repozitár MuseTalk..."
-    git clone https://github.com/TMElyralab/MuseTalk.git "$WORKSPACE/musetalk"
-    cd "$WORKSPACE/musetalk"
+    git clone --depth 1 https://github.com/TMElyralab/MuseTalk.git "$WORKSPACE/$MUSETALK_DIR"
+    cd "$WORKSPACE/$MUSETALK_DIR"
     pip install -r requirements.txt || true
-    pip install mmpose mmcv mmengine
 fi
 echo ">>> AI Repozitáre pre lip-sync sú úspešne pripravené."
 "#,
@@ -532,26 +532,52 @@ elif model_id == 'latentsync-1-5':
         expected_sha=latentsync_sha
     )
     print('✓ LatentSync 1.5 váhy sú pripravené.', flush=True)
-        'latentsync_unet.pt (LatentSync 1.5 UNet)'
-    )
-    print('✓ LatentSync 1.5 váhy sú pripravené.', flush=True)
 
 elif model_id == 'musetalk-weights':
     mt_dir = os.path.join(workspace, 'models/lipsync/musetalk')
     os.makedirs(mt_dir, exist_ok=True)
     print('Sťahujem TMElyralab/MuseTalk (odľahčený fallback lip-sync model)...', flush=True)
-    try:
-        from huggingface_hub import snapshot_download
-        snapshot_download(
-            repo_id='TMElyralab/MuseTalk',
-            local_dir=os.path.dirname(mt_dir.rstrip('/')),
-            allow_patterns=['musetalk/*'],
-            max_workers=4,
+    from huggingface_hub import snapshot_download
+
+    # Stage 5 passes --unet_model_path/--unet_config/--whisper_dir explicitly, so
+    # the files must exist at predictable paths instead of the repository's own
+    # relative defaults. Download into the workspace, then normalise the layout.
+    snapshot_download(
+        repo_id='TMElyralab/MuseTalk',
+        local_dir=mt_dir,
+        allow_patterns=[
+            'models/musetalkV15/unet.pth',
+            'models/musetalkV15/musetalk.json',
+            'models/whisper/*',
+        ],
+        max_workers=4,
+    )
+
+    # MuseTalk v1.5 ships the UNet config as `musetalk.json`; the CLI's
+    # `--unet_config` flag expects a path we control.
+    cfg_src = os.path.join(mt_dir, 'models/musetalkV15/musetalk.json')
+    cfg_dst = os.path.join(mt_dir, 'config.json')
+    if not os.path.exists(cfg_dst) and os.path.exists(cfg_src):
+        shutil.copy2(cfg_src, cfg_dst)
+        print('✓ MuseTalk UNet konfigurácia sprístupnená ako config.json.', flush=True)
+
+    w_src = os.path.join(mt_dir, 'models/musetalkV15/unet.pth')
+    w_dst = os.path.join(mt_dir, 'unet.pth')
+    if not os.path.exists(w_dst) and os.path.exists(w_src):
+        shutil.copy2(w_src, w_dst)
+
+    whisper_dst = os.path.join(mt_dir, 'whisper')
+    whisper_src = os.path.join(mt_dir, 'models/whisper')
+    if not os.path.exists(whisper_dst) and os.path.isdir(whisper_src):
+        shutil.copytree(whisper_src, whisper_dst)
+
+    if not os.path.exists(w_dst):
+        # Doubled braces are required here: this block lives inside a Rust
+        # `format!` literal, so a single-brace placeholder would be consumed by
+        # `format!` and emit an empty path into the generated script.
+        raise FileNotFoundError(
+            f'MuseTalk UNet váhy sa nepodarilo stiahnuť do {{w_dst}}'
         )
-        print('✓ MuseTalk váhy stiahnuté cez HuggingFace Hub.', flush=True)
-    except Exception as e:
-        print(f'Chyba pri sťahovaní MuseTalk cez HuggingFace Hub: {{e}}', flush=True)
-        raise
     print('✓ MuseTalk váhy sú pripravené.', flush=True)
 
 print('HOTOVO', flush=True)

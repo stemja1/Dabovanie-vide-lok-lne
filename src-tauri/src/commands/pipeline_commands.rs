@@ -96,10 +96,17 @@ pub async fn start_pipeline_execution(
     let (tx, rx) = mpsc::unbounded_channel::<ProcessLogLine>();
     spawn_log_forwarder(app_handle.clone(), rx);
 
+    // `AppHandle` is cloned into the task so the orchestrator can resolve the
+    // bundled `scripts/` resource directory from inside the spawned future.
+    let app_for_task = app_handle.clone();
     tokio::spawn(run_and_report(
         app_handle,
         orchestrator.clone(),
-        async move { orchestrator.start_pipeline(cfg, Some(tx)).await },
+        async move {
+            orchestrator
+                .start_pipeline(&app_for_task, cfg, Some(tx))
+                .await
+        },
     ));
 
     Ok(())

@@ -3,12 +3,37 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::config::app_config::{AppConfig, LipsyncEngine};
 use crate::pipeline::stages::{PipelineStageId, PipelineStageInfo, StageFactory, StageStatus};
 use crate::wsl::executor::{ProcessErrorKind, ProcessLogLine, WslExecutor};
 use crate::wsl::path_mapper::PathMapper;
+
+/// Per-stage wall-clock budget.
+///
+/// The previous code applied a flat 60-minute timeout to every stage. That is
+/// fine for ffmpeg muxing but cuts off long ASR and lip-sync runs on bigger
+/// videos, which scale with the video's duration. Stages that scale with input
+/// length get a longer budget; cheap stages stay short so a hang is reported
+/// quickly instead of leaving the UI "running" indefinitely.
+fn stage_timeout(stage_id: PipelineStageId) -> Duration {
+    match stage_id {
+        // Whisper large-v3 transcription is the slowest CPU-bound step.
+        PipelineStageId::Asr => Duration::from_secs(4 * 3600),
+        // Lip-sync inference is the slowest GPU step by a wide margin.
+        PipelineStageId::Lipsync => Duration::from_secs(6 * 3600),
+        // Translation is per-utterance but a long video means many utterances.
+        PipelineStageId::Translate => Duration::from_secs(2 * 3600),
+        // TTS shells out per utterance, so it also scales with segment count.
+        PipelineStageId::Tts => Duration::from_secs(2 * 3600),
+        // ffmpeg demux/mux are I/O bound and quick.
+        PipelineStageId::Demux | PipelineStageId::Mux | PipelineStageId::Review => {
+            Duration::from_secs(30 * 60)
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineExecutionState {
@@ -67,33 +92,116 @@ impl PipelineOrchestrator {
         self.is_cancelled.store(false, Ordering::SeqCst);
     }
 
-    /// Ensures all Python pipeline scripts are present in the WSL workspace directory
-    pub async fn ensure_scripts_synced(distro: &str, workspace_dir: &str) {
+    /// Ensures all Python pipeline scripts are present in the WSL workspace directory.
+    ///
+    /// The scripts are bundled as a Tauri resource (see `tauri.conf.json`
+    /// `bundle.resources`), so they ship next to the executable and are found via
+    /// `resource_dir()` instead of the previously hardcoded `/mnt/c/...` guesses.
+    /// Those guesses only matched a developer's specific folder layout and left
+    /// `$WORKSPACE/scripts` empty on every real installation, so stage 1 died with
+    /// "can't open file".
+    ///
+    /// Errors are propagated instead of being swallowed with `let _ =`: a failed
+    /// sync is a hard, actionable failure the user must see.
+    pub async fn ensure_scripts_synced(
+        app: &AppHandle,
+        distro: &str,
+        workspace_dir: &str,
+    ) -> Result<()> {
+        let source_dir = app
+            .path()
+            .resource_dir()
+            .map_err(|e| anyhow::anyhow!("Nepodarilo sa určiť resource priečinok aplikácie: {}", e))?
+            .join("scripts");
+
+        if !source_dir.join("stage_1_demux.py").is_file() {
+            anyhow::bail!(
+                "Python skripty sa nepodarilo nájsť v: {}. Reštartuj aplikáciu po aktualizácii.",
+                source_dir.display()
+            );
+        }
+
+        // `resource_dir()` is a Windows path, but this command runs inside bash on
+        // the WSL side, where a raw `C:\...` path does not resolve. Convert it to
+        // the /mnt/<drive>/... form the distro can actually read, and reject a
+        // resource dir that lives somewhere WSL cannot mount (e.g. a network or
+        // UNC location) instead of failing later with an opaque `cp` error.
+        let src_wsl = PathMapper::win_to_wsl(&source_dir.to_string_lossy());
+        if src_wsl.starts_with("//") {
+            anyhow::bail!(
+                "Priečinok aplikácie sa nachádza na ceste nedostupnej pre WSL: {}. \
+                 Nainštalujte aplikáciu na lokálny disk.",
+                source_dir.display()
+            );
+        }
+
         // `workspace_dir` is user-editable AppConfig data — always escape it before
         // splicing into a shell command (see `PathMapper::escape_bash_arg`).
         let ws = PathMapper::escape_bash_arg(workspace_dir.trim_end_matches('/'));
+        let src = PathMapper::escape_bash_arg(&src_wsl);
         let cmd = format!(
             r#"
 WORKSPACE={0}
 WORKSPACE="${{WORKSPACE/#\~/$HOME}}"
+SRC={1}
 mkdir -p "$WORKSPACE/scripts"
+cp -f "$SRC"/*.py "$WORKSPACE/scripts/"
 if [ ! -f "$WORKSPACE/scripts/stage_1_demux.py" ]; then
-    for cand in /mnt/c/Dabovanie-vide-lok-lne-main/scripts /mnt/c/*/Dabovanie-vide-lok-lne*/scripts /mnt/c/*/*/scripts; do
-        if [ -d "$cand" ] && [ -f "$cand/stage_1_demux.py" ]; then
-            cp -ru "$cand"/*.py "$WORKSPACE/scripts/" 2>/dev/null || true
-            break
-        fi
-    done
+    echo "SYNC_FAILED: stage_1_demux.py sa nepodarilo skopírovať z $SRC" >&2
+    exit 1
 fi
+echo "SYNC_OK: $WORKSPACE/scripts"
+
+# `$SRC` is a /mnt/<drive>/... path. Report the resolved location so a failure
+# points at the real directory rather than an ambiguous filename.
+ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
 "#,
-            ws
+            ws, src
         );
-        let _ = WslExecutor::run_command_output(distro, &cmd).await;
+
+        let out = WslExecutor::run_command_output(distro, &cmd).await?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "Synchronizácia Python skriptov do WSL zlyhala: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(())
     }
 
     /// Prepares pipeline for a given input video
     pub async fn set_input_video(&self, win_video_path: &str, distro: &str) {
-        let input_wsl = PathMapper::win_to_wsl(win_video_path);
+        // Reject an unusable path up front. Deriving the WSL path from an
+        // already-WSL path, or from a file that does not exist, produced commands
+        // that only failed much later inside ffmpeg.
+        let trimmed = win_video_path.trim();
+        if trimmed.is_empty() {
+            let mut st = self.state.lock().await;
+            st.error_summary = Some("Vstupná cesta k videu je prázdna.".to_string());
+            return;
+        }
+        if trimmed.contains('\0') {
+            let mut st = self.state.lock().await;
+            st.error_summary = Some("Vstupná cesta k videu obsahuje neplatné znaky.".to_string());
+            return;
+        }
+        if !std::path::Path::new(trimmed).is_file() {
+            let mut st = self.state.lock().await;
+            st.error_summary =
+                Some(format!("Vstupné video sa nenašlo na disku: '{}'", trimmed));
+            return;
+        }
+        if PathMapper::win_to_wsl(trimmed).starts_with("//") {
+            let mut st = self.state.lock().await;
+            st.error_summary = Some(
+                "Vstupné video leží na sieti/UNC ceste, ktorú WSL nedokáže spracovať. \
+                 Skopírujte ho na lokálny disk (napr. C:\\) a skúste znova."
+                    .to_string(),
+            );
+            return;
+        }
+
+        let input_wsl = PathMapper::win_to_wsl(trimmed);
         let input_path = std::path::Path::new(&input_wsl);
         let parent = input_path
             .parent()
@@ -113,7 +221,7 @@ fi
         let meta_win = PathMapper::wsl_to_win(&meta_wsl, distro);
 
         let mut st = self.state.lock().await;
-        st.input_video_path_win = win_video_path.to_string();
+        st.input_video_path_win = trimmed.to_string();
         st.input_video_path_wsl = input_wsl;
         st.output_video_path_wsl = Some(out_wsl);
         st.output_video_path_win = Some(out_win);
@@ -130,6 +238,7 @@ fi
     /// Executes the pipeline sequentially
     pub async fn start_pipeline(
         &self,
+        app: &AppHandle,
         config: AppConfig,
         log_tx: Option<mpsc::UnboundedSender<ProcessLogLine>>,
     ) -> Result<()> {
@@ -137,6 +246,15 @@ fi
             let mut st = self.state.lock().await;
             if st.is_running {
                 anyhow::bail!("Pipeline už beží. Počkajte na dokončenie alebo zrušte aktuálny proces.");
+            }
+            // Refuse to start without a usable input video. The run used to begin
+            // and fail at stage 1 with a raw ffmpeg "No such file or directory"
+            // that never hinted the real problem was the missing selection.
+            if st.input_video_path_wsl.trim().is_empty() {
+                anyhow::bail!("Nie je vybraný vstupný video súbor. Použite tlačidlo 'Vybrať video'.");
+            }
+            if let Some(err) = st.error_summary.clone() {
+                anyhow::bail!("{}", err);
             }
             st.is_running = true;
             st.is_paused_for_review = false;
@@ -149,8 +267,25 @@ fi
 
         self.reset_cancel();
 
-        // Ensure scripts are synced to workspace directory in WSL
-        Self::ensure_scripts_synced(&config.wsl_distro, &config.workspace_dir).await;
+        // Ensure scripts are synced to workspace directory in WSL. A failure here
+        // aborts the run: every later stage would otherwise fail with a confusing
+        // "file not found" for the very same missing script.
+        if let Err(e) = Self::ensure_scripts_synced(app, &config.wsl_distro, &config.workspace_dir).await {
+            let mut st = self.state.lock().await;
+            st.is_running = false;
+            st.error_summary = Some(format!("Pipeline sa nespustil: {:#}", e));
+            if let Some(ref tx) = log_tx {
+                let _ = tx.send(ProcessLogLine {
+                    stream: "system".to_string(),
+                    message: format!("=== PIPELINE NESPUSTENÝ: {:#} ===", e),
+                    timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                    is_progress: false,
+                    progress_percent: None,
+                    step_tag: Some("error".to_string()),
+                });
+            }
+            return Err(e);
+        }
 
         let stages_count = {
             let st = self.state.lock().await;
@@ -262,11 +397,24 @@ fi
                     s.completed_at_ms = Some(chrono::Utc::now().timestamp_millis());
                 }
             }
-            let tts_pos = st
+            // Resume from the TTS stage. The old `unwrap_or(4)` silently fell back
+            // to a hardcoded index that only happens to be TTS with the current
+            // stage list; a changed or reordered list would have resumed in the
+            // wrong place. Resolve by id, and bail out loudly if TTS is absent.
+            let tts_pos = match st
                 .stages
                 .iter()
                 .position(|s| s.id == PipelineStageId::Tts)
-                .unwrap_or(4);
+            {
+                Some(pos) => pos,
+                None => {
+                    st.is_running = false;
+                    st.is_paused_for_review = true;
+                    anyhow::bail!(
+                        "Fáza TTS sa v zozname fáz nenachádza; pipeline nemožno pokračovať."
+                    );
+                }
+            };
             (tts_pos, st.stages.len())
         };
 
@@ -320,6 +468,23 @@ fi
         Ok(())
     }
 
+    /// Records a stage failure on the shared state without running the stage.
+    async fn mark_stage_failed(
+        &self,
+        stage_index: usize,
+        message: String,
+        suggestion: Option<String>,
+    ) {
+        let mut st = self.state.lock().await;
+        st.is_running = false;
+        st.error_summary = Some(message.clone());
+        if let Some(s) = st.stages.get_mut(stage_index) {
+            s.status = StageStatus::Failed;
+            s.error_message = Some(message);
+            s.user_suggestion = suggestion;
+        }
+    }
+
     /// Runs a single pipeline stage
     pub async fn run_single_stage(
         &self,
@@ -351,6 +516,39 @@ fi
             )
         };
 
+        // Refuse to run a stage with no input video. Every stage command
+        // interpolates these paths, and stage 1 would fail deep inside ffmpeg
+        // with a confusing "No such file or directory" instead of a clear message.
+        if stage_id != PipelineStageId::Mux && input_wsl.trim().is_empty() {
+            self.mark_stage_failed(
+                stage_index,
+                "Nie je vybraný vstupný video súbor.".to_string(),
+                Some("Pomocou tlačidla 'Vybrať video' najprv vyberte vstupné video.".to_string()),
+            )
+            .await;
+            anyhow::bail!("Nie je vybraný vstupný video súbor.");
+        }
+
+        // The TTS/lipsync/mux chain all read the metadata file produced by stage 3.
+        // Without it these stages fail with "Chýba súbor metadát", so check up
+        // front and name the stage the user actually has to run.
+        let requires_metadata = matches!(
+            stage_id,
+            PipelineStageId::Translate
+                | PipelineStageId::Tts
+                | PipelineStageId::Lipsync
+                | PipelineStageId::Mux
+        );
+        if requires_metadata && meta_wsl.trim().is_empty() {
+            self.mark_stage_failed(
+                stage_index,
+                "Cesta k súboru utterance_metadata nie je nastavená.".to_string(),
+                Some("Spustite najprv fázy 1–3 (Demux, ASR, Preklad).".to_string()),
+            )
+            .await;
+            anyhow::bail!("Cesta k súboru utterance_metadata nie je nastavená.");
+        }
+
         // If simulate mode is on, run mock simulation
         if config.simulate_mode {
             self.run_mock_stage(stage_id, stage_index, log_tx).await?;
@@ -364,7 +562,10 @@ fi
             &config.wsl_distro,
             &cmd,
             log_tx.clone(),
-            Some(Duration::from_secs(3600)),
+            // Per-stage timeout. A single flat 1-hour budget killed long ASR and
+            // lip-sync runs on large videos; ASR and lip-sync get a longer budget
+            // because they scale with video length, while the fast stages stay short.
+            Some(stage_timeout(stage_id)),
             Some(self.is_cancelled.clone()),
         )
         .await?;
@@ -380,14 +581,34 @@ fi
 
         // Handle failure and potential LatentSync OOM fallback to MuseTalk
         if !res.success {
-            if stage_id == PipelineStageId::Lipsync
+            // A missing lip-sync checkout or checkpoint is the single most common
+            // cause of stage 6 failing, and MuseTalk needs a strictly smaller VRAM
+            // budget than LatentSync anyway. The fallback used to trigger only on a
+            // diagnosed OOM, so this case just failed with no suggested action even
+            // when MuseTalk was installed and would have worked.
+            let lipsync_recoverable = stage_id == PipelineStageId::Lipsync
                 && config.lipsync_fallback_on_oom
-                && res.error_kind == Some(ProcessErrorKind::OutOfMemoryGpu)
-            {
+                && config.lipsync_engine == LipsyncEngine::LatentSync15
+                && (res.error_kind == Some(ProcessErrorKind::OutOfMemoryGpu)
+                    || res.error_kind == Some(ProcessErrorKind::MissingModelWeights)
+                    || res.error_kind == Some(ProcessErrorKind::MissingPackage)
+                    || res.error_kind == Some(ProcessErrorKind::RocmDriverError));
+
+            if lipsync_recoverable {
+                let reason = match res.error_kind {
+                    Some(ProcessErrorKind::MissingModelWeights) => {
+                        "chýbajúce váhy modelu"
+                    }
+                    Some(ProcessErrorKind::MissingPackage) => "chýbajúci Python balík",
+                    Some(ProcessErrorKind::RocmDriverError) => "chyba ROCm ovládača",
+                    _ => "vyčerpanie VRAM (OOM)",
+                };
                 if let Some(ref tx) = log_tx {
                     let _ = tx.send(ProcessLogLine {
                         stream: "system".to_string(),
-                        message: "⚠️ LatentSync zlyhal na OOM. Automaticky aktivujem záchranný fallback: MuseTalk Engine (~4.5 GB VRAM)...".to_string(),
+                        message: format!(
+                            "⚠️ LatentSync 1.5 zlyhal ({reason}). Automaticky aktivujem záchranný fallback: MuseTalk Engine (~4.5 GB VRAM)..."
+                        ),
                         timestamp_ms: chrono::Utc::now().timestamp_millis(),
                         is_progress: false,
                         progress_percent: None,
@@ -410,14 +631,16 @@ fi
                     &config.wsl_distro,
                     &fallback_cmd,
                     log_tx.clone(),
-                    Some(Duration::from_secs(3600)),
+                    // Same per-stage budget as the primary attempt, not the old
+                    // flat hour that applied before timeouts were stage-aware.
+                    Some(stage_timeout(stage_id)),
                     Some(self.is_cancelled.clone()),
                 )
                 .await?;
 
                 if retry_res.success {
                     let mut st = self.state.lock().await;
-                    st.active_lipsync_engine = "MuseTalk (OOM Fallback)".to_string();
+                    st.active_lipsync_engine = "MuseTalk (Fallback)".to_string();
                     if let Some(s) = st.stages.get_mut(stage_index) {
                         s.status = StageStatus::Completed;
                         s.progress_percent = 100.0;
@@ -427,22 +650,46 @@ fi
                     }
                     return Ok(());
                 }
+
+                // The fallback also failed. Report both errors: showing only the
+                // original LatentSync failure hid the fact that MuseTalk was tried
+                // and why it did not work either.
+                if let Some(ref tx) = log_tx {
+                    let _ = tx.send(ProcessLogLine {
+                        stream: "system".to_string(),
+                        message: format!(
+                            "❌ Záchranný MuseTalk engine tiež zlyhal:\n{}",
+                            retry_res.stderr.trim()
+                        ),
+                        timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                        is_progress: false,
+                        progress_percent: None,
+                        step_tag: Some("fallback_failed".to_string()),
+                    });
+                }
             }
 
-            // Otherwise mark as failed
+            // Otherwise mark as failed. `res.stderr` was the only field surfaced,
+            // but the wrapper's own diagnostics (OOM/ROCm/missing weights) are often
+            // the actionable part, so include the remedy when there is one.
             let mut st = self.state.lock().await;
             let stage_name = if let Some(s) = st.stages.get_mut(stage_index) {
                 s.status = StageStatus::Failed;
                 s.error_message = Some(res.stderr.clone());
-                s.user_suggestion = res.user_remedy;
+                s.user_suggestion = res.user_remedy.clone();
                 s.name.clone()
             } else {
                 format!("Fáza {}", stage_index + 1)
             };
+            let remedy = res
+                .user_remedy
+                .map(|r| format!(" Rada: {}", r))
+                .unwrap_or_default();
             return Err(anyhow::anyhow!(
-                "Fáza {} zlyhala: {}",
+                "Fáza {} zlyhala: {}{}",
                 stage_name,
-                res.stderr
+                res.stderr.trim(),
+                remedy
             ));
         }
 

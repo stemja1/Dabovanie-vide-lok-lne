@@ -60,6 +60,11 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, global_spee
         doc = json.load(f)
 
     utterances = doc.get("utterances", [])
+    if not utterances:
+        raise RuntimeError(
+            "Metadáta neobsahujú žiadne repliky. Spustite najprv fázy 1–3 "
+            "(Demux, ASR, Preklad) a uistite sa, že ASR našlo reč vo videu."
+        )
     abs_workspace = os.path.abspath(workspace)
 
     audio_segments_dir = os.path.join(abs_workspace, "audio_segments")
@@ -89,7 +94,18 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, global_spee
         if not zh_text:
             zh_text = "本地AI配音测试。"
 
-        speed = utt.get("speed_factor", global_speed)
+        # A per-utterance `speed_factor` of 1.0 is the default stored by the ASR
+        # stage, so it must not swallow the user's global speed setting. Treat an
+        # untouched 1.0 as "not overridden" and fall back to the configured value.
+        speed = utt.get("speed_factor", 1.0)
+        try:
+            speed = float(speed)
+        except (TypeError, ValueError):
+            speed = 1.0
+        if not (0.25 <= speed <= 4.0):
+            speed = 1.0
+        if abs(speed - 1.0) < 1e-6:
+            speed = float(global_speed) if 0.25 <= float(global_speed) <= 4.0 else 1.0
         print(f"[{i+1}/{total}] Syntetizujem '{utt_id}': {zh_text} (trvanie: {target_duration:.2f}s, speed: {speed:.2f})")
 
         if simulate:
@@ -155,34 +171,113 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, global_spee
         pct = 10.0 + (float(i + 1) / float(total)) * 75.0
         print(f"[PROGRESS:{pct:.1f}%]")
 
-    # Build master synchronized audio track matching original video timeline
+    # Build master synchronized audio track matching original video timeline.
+    #
+    # `total_duration` used to be taken straight from the document, but stage 3
+    # wrote it as the SUM of segment durations, which ignores the silence between
+    # segments and is therefore shorter than the video. The track was sized too
+    # small and every utterance starting near the end was silently dropped by the
+    # `target_idx < total_samples` guard, so the tail of the dialogue had no Chinese
+    # voice at all. Derive the length from the latest end_time instead, matching the
+    # Rust `recalculate_timings` logic.
     print(f"[TTS] Vytváram zarovnanú zvukovú stopu: {master_dubbed_wav}")
-    total_dur = doc.get("total_duration", 30.0)
+    timeline_end = max(
+        [float(utt.get("end_time", 0.0) or 0.0) for utt in utterances] or [0.0]
+    )
+    total_dur = max(timeline_end, float(doc.get("total_duration", 0.0) or 0.0))
     total_samples = int(sample_rate * (total_dur + 3.0))
     master_samples = [0] * total_samples
 
+    missing_segments = []
+    truncated_segments = []
+
     for utt in utterances:
-        st_sample = int(utt.get("start_time", 0.0) * sample_rate)
-        seg_file = os.path.abspath(os.path.join(abs_workspace, utt.get("target_audio_file", f"audio_segments/{utt['id']}.wav")))
-        if os.path.exists(seg_file):
-            with wave.open(seg_file, "r") as wf:
-                n_frames = wf.getnframes()
-                frames = wf.readframes(n_frames)
-                seg_data = struct.unpack(f"<{n_frames}h", frames)
-                for idx, sample in enumerate(seg_data):
-                    target_idx = st_sample + idx
-                    if target_idx < total_samples:
-                        cur = master_samples[target_idx] + sample
-                        master_samples[target_idx] = max(-32768, min(32767, cur))
+        st_sample = int(float(utt.get("start_time", 0.0) or 0.0) * sample_rate)
+        seg_file = os.path.abspath(
+            os.path.join(
+                abs_workspace,
+                utt.get("target_audio_file", f"audio_segments/{utt['id']}.wav"),
+            )
+        )
+        if not os.path.exists(seg_file):
+            missing_segments.append(utt.get("id", "?"))
+            continue
+
+        with wave.open(seg_file, "r") as wf:
+            # Normalise to the master's format: mono, 16-bit, 24 kHz. TTS
+            # backends emit their own rate (Kokoro 24 kHz, Piper 22.05 kHz) and
+            # `struct.unpack` assumed mono without checking, so a mismatched
+            # segment either raised or was placed at the wrong pitch/length.
+            n_channels = wf.getnchannels()
+            seg_rate = wf.getframerate() or sample_rate
+            sampwidth = wf.getsampwidth()
+            frames = wf.readframes(wf.getnframes())
+
+        if sampwidth != 2:
+            print(
+                f"[TTS] UPOZORNENIE: {utt.get('id')} má {sampwidth * 8}-bit vzorkovanie, preskočujem.",
+                file=sys.stderr,
+            )
+            missing_segments.append(utt.get("id", "?"))
+            continue
+
+        n_samples = len(frames) // (2 * n_channels)
+        seg_data = struct.unpack(f"<{n_samples * n_channels}h", frames)
+        if n_channels > 1:
+            seg_data = tuple(
+                sum(seg_data[i : i + n_channels]) // n_channels
+                for i in range(0, n_samples * n_channels, n_channels)
+            )
+
+        # Resample linearne, aby sa segment nestal vyšším/pomalejším.
+        if seg_rate != sample_rate:
+            ratio = seg_rate / float(sample_rate)
+            out_len = max(1, int(n_samples / ratio))
+            resampled = [0] * out_len
+            for i in range(out_len):
+                src = i * ratio
+                i0 = int(src)
+                i1 = min(i0 + 1, n_samples - 1)
+                frac = src - i0
+                resampled[i] = int(seg_data[i0] * (1.0 - frac) + seg_data[i1] * frac)
+            seg_data = resampled
+
+        if st_sample >= total_samples:
+            truncated_segments.append(utt.get("id", "?"))
+            continue
+
+        for idx, sample in enumerate(seg_data):
+            target_idx = st_sample + idx
+            if target_idx >= total_samples:
+                truncated_segments.append(utt.get("id", "?"))
+                break
+            cur = master_samples[target_idx] + sample
+            master_samples[target_idx] = max(-32768, min(32767, cur))
+
+    if missing_segments:
+        print(
+            f"[TTS] UPOZORNENIE: chýbajúce audio segmente ({len(missing_segments)}): "
+            f"{', '.join(missing_segments[:10])}",
+            file=sys.stderr,
+        )
+    if truncated_segments:
+        print(
+            f"[TTS] UPOZORNENIE: segmenty prekročili dĺžku stopy ({len(truncated_segments)}): "
+            f"{', '.join(truncated_segments[:10])}",
+            file=sys.stderr,
+        )
 
     with wave.open(master_dubbed_wav, "w") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
-        out_bytes = bytearray()
-        for s in master_samples:
-            out_bytes.extend(struct.pack("<h", s))
-        wf.writeframes(out_bytes)
+        wf.writeframes(struct.pack(f"<{len(master_samples)}h", *master_samples))
+
+    if not missing_segments and not truncated_segments and not any(master_samples):
+        raise RuntimeError(
+            "TTS stavila zarovnanú stopu, ale tá je úplne tichá. "
+            "Skontrolujte vygenerované TTS segmenty a nastavenia hlasu."
+        )
 
     gc.collect()
 

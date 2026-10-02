@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+use crate::pipeline::orchestrator::PipelineExecutionState;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WordItem {
     pub word: String,
@@ -64,6 +66,30 @@ impl UtteranceMetadataDocument {
             .with_context(|| "Chyba pri parsovaní utterance_metadata.json")?;
         doc.recalculate_timings();
         Ok(doc)
+    }
+
+    /// Resolves the file the metadata editor should load for a given pipeline
+    /// state: the real per-video metadata file when one exists, otherwise the
+    /// demo document.
+    ///
+    /// The editor previously always called `get_demo_utterance_metadata` and
+    /// saved to a hardcoded relative path, so the review stage never touched the
+    /// file the pipeline actually reads. This keeps the same fallback behaviour
+    /// for a fresh session but routes real runs to their own file.
+    pub fn resolve_review_document(state: &PipelineExecutionState) -> Result<Option<Self>> {
+        let path = state
+            .metadata_json_path_win
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty());
+
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        if !Path::new(path).is_file() {
+            return Ok(None);
+        }
+        Self::load_from_file(path).map(Some)
     }
 
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {

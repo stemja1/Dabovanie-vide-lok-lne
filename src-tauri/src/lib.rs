@@ -49,6 +49,7 @@ pub fn run() {
             run_single_stage,
             cancel_pipeline_execution,
             // Metadata Editor
+            get_review_utterance_metadata,
             load_utterance_metadata,
             save_utterance_metadata,
             get_demo_utterance_metadata,

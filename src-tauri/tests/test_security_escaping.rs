@@ -83,16 +83,37 @@ fn test_workspace_var_assignment_blocks_command_substitution() {
         escaped
     );
 
-    let output = Command::new("bash")
-        .arg("-c")
-        .arg(&script)
-        .output()
-        .expect("failed to run bash");
+    let output = match Command::new("bash").arg("-c").arg(&script).output() {
+        Ok(output) => output,
+        Err(e) => {
+            // No bash binary on this host at all. Skipping beats failing: the
+            // escaping itself is still asserted by `test_command_injection_preventon`
+            // and by the unit tests in `path_mapper.rs`.
+            eprintln!("SKIP: no bash executable available ({})", e);
+            return;
+        }
+    };
 
     assert!(
         !marker.exists(),
         "command substitution executed — injection succeeded, VAR={{escaped}} pattern is NOT safe"
     );
+
+    // On Windows, `bash` may resolve to the WSL launcher (bash.exe in
+    // WindowsApps). Without an installed distribution it prints a "no installed
+    // distributions" notice and exits non-zero, so the script never actually ran.
+    // That is an environment gap, not an escaping failure, so skip instead of
+    // asserting on output that could never appear.
+    if !output.status.success() && !looks_like_real_bash(&output.stdout) {
+        eprintln!(
+            "SKIP: bash did not execute the script (status {:?}); likely the WSL \
+             launcher with no distribution installed",
+            output.status.code()
+        );
+        let _ = std::fs::remove_file(&marker);
+        return;
+    }
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("resolved:"),
@@ -101,6 +122,16 @@ fn test_workspace_var_assignment_blocks_command_substitution() {
     );
 
     let _ = std::fs::remove_file(&marker);
+}
+
+/// Returns true when the output looks like a real POSIX shell (as opposed to the
+/// Windows `wsl.exe` "no installed distributions" notice, which is UTF-16LE and
+/// contains that phrase).
+fn looks_like_real_bash(stdout: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stdout);
+    let text = text.replace('\0', "");
+    !text.contains("no installed distributions")
+        && !text.contains("Windows Subsystem for Linux has no")
 }
 
 /// Companion to `test_command_injection_prevention` for the PowerShell escaping

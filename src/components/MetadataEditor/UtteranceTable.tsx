@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Save,
   Plus,
@@ -17,10 +17,18 @@ import {
 } from 'lucide-react';
 import { UtteranceItem, UtteranceMetadataDocument } from '../../types/metadata';
 import { invokeCommand } from '../../utils/tauriBridge';
+import { formatSrtTimestamp } from '../../utils/formatters';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
 import { UtteranceRow } from './UtteranceRow';
+
+/** Mirrors the `ReviewMetadataPayload` returned by the Rust backend. */
+interface ReviewMetadataPayload {
+  document: UtteranceMetadataDocument;
+  file_path: string | null;
+  is_real_run: boolean;
+}
 
 interface UtteranceTableProps {
   onConfirmAndContinue?: () => void;
@@ -37,40 +45,65 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedNotification, setCopiedNotification] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /**
+   * Absolute path returned by the backend alongside the document. Edits must be
+   * written back here, otherwise the pipeline keeps reading its own unmodified
+   * file and every review change is silently discarded.
+   */
+  const [savePath, setSavePath] = useState<string | null>(null);
+  const [isRealRun, setIsRealRun] = useState<boolean>(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    setErrorMessage(null);
     try {
-      const data = await invokeCommand<UtteranceMetadataDocument>('get_demo_utterance_metadata');
-      setDoc(data);
+      const payload = await invokeCommand<ReviewMetadataPayload>('get_review_utterance_metadata');
+      setDoc(payload.document);
+      setSavePath(payload.file_path ?? null);
+      setIsRealRun(payload.is_real_run);
       setHasUnsavedChanges(false);
     } catch (err) {
       console.error('Failed to load utterance metadata', err);
+      setErrorMessage(
+        err instanceof Error
+          ? err.message
+          : 'Nepodarilo sa načítať metadáta z pipeline. Spustite fázy 1–3 a skúste znova.'
+      );
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
+
+  /**
+   * Recomputes the document duration the same way the Rust backend does in
+   * `recalculate_timings`: as the latest `end_time`, not the sum of segment
+   * durations. Summing durations ignores the silence between segments, so the
+   * value drifted lower than the real video length and stage 4 sized the master
+   * dubbed track too short, cutting off the tail of the dialogue.
+   */
+  const withRecalculatedTiming = (utterances: UtteranceItem[]): Partial<UtteranceMetadataDocument> => {
+    const sorted = [...utterances].sort((a, b) => a.start_time - b.start_time);
+    const maxEnd = sorted.reduce((acc, u) => Math.max(acc, u.end_time), 0);
+    return {
+      utterances: sorted.map((u) => ({
+        ...u,
+        duration: Number(Math.max(0.05, u.end_time - u.start_time).toFixed(2)),
+      })),
+      total_duration: Number(maxEnd.toFixed(2)),
+    };
+  };
 
   const handleUpdateUtterance = (updated: UtteranceItem) => {
     if (!doc) return;
-    const newUtts = doc.utterances.map((u) => (u.id === updated.id ? updated : u));
-    setDoc({
-      ...doc,
-      utterances: newUtts,
-      total_duration: Number(newUtts.reduce((acc, u) => acc + u.duration, 0).toFixed(2)),
-    });
+    setDoc({ ...doc, ...withRecalculatedTiming(doc.utterances.map((u) => (u.id === updated.id ? updated : u))) });
     setHasUnsavedChanges(true);
   };
 
   const handleDeleteUtterance = (id: string) => {
     if (!doc) return;
-    const newUtts = doc.utterances.filter((u) => u.id !== id);
-    setDoc({
-      ...doc,
-      utterances: newUtts,
-      total_duration: Number(newUtts.reduce((acc, u) => acc + u.duration, 0).toFixed(2)),
-    });
+    setDoc({ ...doc, ...withRecalculatedTiming(doc.utterances.filter((u) => u.id !== id)) });
     setHasUnsavedChanges(true);
   };
 
@@ -96,28 +129,43 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
       words: [],
     };
 
-    const newUtts = [...doc.utterances, newUtt];
-    setDoc({
-      ...doc,
-      utterances: newUtts,
-      total_duration: Number(newUtts.reduce((acc, u) => acc + u.duration, 0).toFixed(2)),
-    });
+    setDoc({ ...doc, ...withRecalculatedTiming([...doc.utterances, newUtt]) });
     setHasUnsavedChanges(true);
   };
 
-  const handleSaveChanges = async () => {
-    if (!doc) return;
+  const handleSaveChanges = async (): Promise<boolean> => {
+    if (!doc) return false;
+
+    if (!savePath) {
+      // No pipeline run has produced a file yet, so there is nowhere correct to
+      // write. Previously this saved to 'utterance_metadata.json' relative to the
+      // process CWD, which no stage ever read.
+      setErrorMessage(
+        'Nie je aktívny žiadny dabingový beh, takže nie je kam uložiť metadáta. ' +
+          'Najprv spustite fázy 1–3 (Demux, ASR, Preklad).'
+      );
+      return false;
+    }
+
     setIsSaving(true);
+    setErrorMessage(null);
     try {
       await invokeCommand('save_utterance_metadata', {
-        file_path: 'utterance_metadata.json',
+        file_path: savePath,
         document: { ...doc, is_verified_by_user: true },
       });
       setHasUnsavedChanges(false);
-      setCopiedNotification('Metadáta úspešne uložené!');
-      setTimeout(() => setCopiedNotification(null), 2500);
+      setCopiedNotification('Metadáta uložené do pipeline súboru.');
+      setTimeout(() => setCopiedNotification(null), 3000);
+      return true;
     } catch (err) {
       console.error('Failed to save metadata', err);
+      setErrorMessage(
+        err instanceof Error
+          ? err.message
+          : 'Uloženie metadát zlyhalo. Skontrolujte, či súbor nie je otvorený v inom programe.'
+      );
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -126,19 +174,19 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
   const handleExportSrt = () => {
     if (!doc) return;
     let srt = '';
-    doc.utterances.forEach((utt, idx) => {
-      const formatTime = (secs: number) => {
-        const h = Math.floor(secs / 3600);
-        const m = Math.floor((secs % 3600) / 60);
-        const s = Math.floor(secs % 60);
-        const ms = Math.round((secs - Math.floor(secs)) * 1000);
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
-      };
-      srt += `${idx + 1}\n${formatTime(utt.start_time)} --> ${formatTime(utt.end_time)}\n${utt.chinese_text}\n${utt.slovak_text}\n\n`;
+    let cue = 0;
+    doc.utterances.forEach((utt) => {
+      const zh = (utt.chinese_text || '').trim();
+      const sk = (utt.slovak_text || '').trim();
+      if (!zh && !sk) return;
+      cue += 1;
+      srt += `${cue}\n${formatSrtTimestamp(utt.start_time)} --> ${formatSrtTimestamp(
+        Math.max(utt.start_time + 0.2, utt.end_time)
+      )}\n${zh}\n${sk}\n\n`;
     });
 
     navigator.clipboard.writeText(srt);
-    setCopiedNotification('SRT titulky skopírované do schránky!');
+    setCopiedNotification(`SRT titulky skopírované (${cue} cues).`);
     setTimeout(() => setCopiedNotification(null), 2500);
   };
 
@@ -166,11 +214,41 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
   }, [doc, searchQuery]);
 
   if (!doc) {
-    return <div className="p-8 text-center text-slate-400">Načítavam utterance_metadata...</div>;
+    return (
+      <div className="max-w-6xl mx-auto p-8 space-y-4">
+        {errorMessage ? (
+          <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div>
+              <strong className="block font-semibold text-rose-200">Nepodarilo sa načítať metadáta</strong>
+              <span className="text-xs text-rose-300/80">{errorMessage}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center text-slate-400">Načítavam utterance_metadata...</div>
+        )}
+        <div className="text-center">
+          <Button variant="secondary" size="sm" onClick={loadData}>
+            <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+            Skúsiť znova
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-12">
+      {errorMessage && (
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <div>
+            <strong className="block font-semibold text-rose-200">Uloženie metadát zlyhalo</strong>
+            <span className="text-xs text-rose-300/80">{errorMessage}</span>
+          </div>
+        </div>
+      )}
+
       {/* Top Header & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
@@ -178,6 +256,7 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
             <h2 className="text-xl font-bold text-slate-100">Editor Metadát & Prekladu</h2>
             <Badge variant="primary">utterance_metadata.json</Badge>
             {hasUnsavedChanges && <Badge variant="warning">Neuložené zmeny</Badge>}
+            {!isRealRun && <Badge variant="secondary">Ukážkové dáta</Badge>}
             {copiedNotification && (
               <Badge variant="success" className="animate-fadeIn">
                 <Check className="w-3 h-3 mr-1 inline" /> {copiedNotification}
@@ -225,8 +304,13 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
               size="sm"
               rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
               onClick={async () => {
-                await handleSaveChanges();
-                onConfirmAndContinue();
+                // Only resume the pipeline once the edits actually reached the
+                // file stage 4 reads; otherwise TTS would run against the
+                // pre-review translations.
+                const saved = await handleSaveChanges();
+                if (saved && onConfirmAndContinue) {
+                  onConfirmAndContinue();
+                }
               }}
             >
               Potvrdiť a spustiť TTS

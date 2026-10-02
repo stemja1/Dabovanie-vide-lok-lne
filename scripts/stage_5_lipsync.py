@@ -11,19 +11,40 @@ import argparse
 import os
 import sys
 import json
+import shutil
 import subprocess
-import torch
+
+# `torch` is imported lazily. The ROCm attention patch and the engines need it,
+# but the import is expensive and the error paths below (missing checkpoint,
+# missing repo, missing config) do not -- importing it up front meant a plain
+# "you have not run the Setup Wizard yet" surfaced as a torch traceback.
 
 try:
     from rocm_attention_patch import apply_rocm_sdpa_patch
 except ImportError:
-    # Try local directory import
-    sys.path.append(os.path.dirname(__file__))
+    # The orchestrator runs the stage with the absolute script path, so the
+    # sibling module is not always importable. Add the script directory before
+    # retrying, otherwise the ROCm optimisation silently degrades to a no-op.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
         from rocm_attention_patch import apply_rocm_sdpa_patch
     except ImportError:
         def apply_rocm_sdpa_patch():
-            pass
+            print(
+                "[UPOZORNENIE] rocm_attention_patch.py sa nenašiel; "
+                "SDPA optimalizácia je vypnutá.",
+                file=sys.stderr,
+            )
+
+def _yaml_quote(value: str) -> str:
+    """Quotes a path for a YAML scalar.
+
+    Windows paths contain backslashes and often a drive colon, both of which
+    change meaning in unquoted YAML. Single quotes keep them literal; an embedded
+    single quote is escaped by doubling it.
+    """
+    return "'" + str(value).replace("'", "''") + "'"
+
 
 def run_lipsync(input_video: str, workspace: str, meta_path: str, engine: str, batch_size: int, rocm_sdpa: bool, simulate: bool = False):
     print(f"=== Fáza 5: Lip-sync Animácia ({engine.upper()}) ===")
@@ -31,7 +52,17 @@ def run_lipsync(input_video: str, workspace: str, meta_path: str, engine: str, b
     print("[PROGRESS:5.0%]")
 
     if rocm_sdpa:
-        apply_rocm_sdpa_patch()
+        try:
+            apply_rocm_sdpa_patch()
+        except Exception as e:
+            # The patch is an optimisation, not a requirement. Failing to import
+            # it must not abort lip-sync, otherwise a missing `diffusers` turns
+            # into an unexplained stage failure.
+            print(
+                f"[UPOZORNENIE] ROCm SDPA patch sa nepodarilo aplikovať ({e}); "
+                "pokračujem bez neho.",
+                file=sys.stderr,
+            )
 
     abs_workspace = os.path.abspath(workspace)
     audio_track = os.path.join(abs_workspace, "audio", "dubbed_speech_track.wav")
@@ -42,6 +73,11 @@ def run_lipsync(input_video: str, workspace: str, meta_path: str, engine: str, b
 
     if not os.path.exists(input_video):
         raise FileNotFoundError(f"Chýba vstupné video: {input_video}")
+
+    if os.path.getsize(audio_track) == 0:
+        raise RuntimeError(
+            f"Stopa reči je prázdna: {audio_track}. Fáza TTS nevygenerovala žiadny zvuk."
+        )
 
     print(f"[Lip-sync] Načítavam video: {input_video} a reč: {audio_track}")
     print("[PROGRESS:20.0%]")
@@ -68,59 +104,172 @@ def run_lipsync(input_video: str, workspace: str, meta_path: str, engine: str, b
     if engine == "latentsync":
         ckpt_path = os.path.join(abs_workspace, "models", "lipsync", "latentsync", "latentsync_unet.pt")
         config_path = os.path.join(abs_workspace, "models", "lipsync", "latentsync", "unet_config.json")
-        
+
         print(f"[LatentSync 1.5] Kontrolujem model: {ckpt_path}...")
         if not os.path.exists(ckpt_path):
             print(f"[UPOZORNENIE] LatentSync model checkpoint {ckpt_path} nebol nájdený. Stiahnite checkpoint v Setup Wizarde.", file=sys.stderr)
             raise FileNotFoundError(f"Chýba LatentSync 1.5 checkpoint: {ckpt_path}")
 
-        print("[LatentSync 1.5] Spúšťam UNet inferenciu s dávkou (batch_size={batch_size})...")
+        latentsync_repo = os.path.join(abs_workspace, "LatentSync")
+        # The entrypoint lives under `scripts/` in the upstream repo. Search both
+        # locations so a flat checkout and the standard layout both work.
+        latentsync_cli = None
+        for candidate in (
+            os.path.join(latentsync_repo, "scripts", "inference.py"),
+            os.path.join(latentsync_repo, "inference.py"),
+        ):
+            if os.path.exists(candidate):
+                latentsync_cli = candidate
+                break
+        if latentsync_cli is None:
+            raise RuntimeError(
+                "LatentSync repozitár sa nenašiel na očakávanej ceste: "
+                f"{os.path.join(latentsync_repo, 'scripts', 'inference.py')}. "
+                "Spustite Setup Wizard → krok 'Lip-Sync Repozitáre'."
+            )
+
+        # The UNet YAML ships with the repo under `configs/unet/`. `stage2.yaml`
+        # is the full-quality v1.5 config; `stage2_efficient.yaml` is the
+        # lower-VRAM variant. The workspace never contained a copy of the config,
+        # so always prefer the repo's own file.
+        unet_config = None
+        for candidate in (
+            config_path,
+            os.path.join(latentsync_repo, "configs", "unet", "stage2.yaml"),
+            os.path.join(latentsync_repo, "configs", "unet", "stage1.yaml"),
+            os.path.join(latentsync_repo, "configs", "unet.yaml"),
+        ):
+            if candidate and os.path.exists(candidate):
+                unet_config = candidate
+                break
+        if unet_config is None:
+            raise RuntimeError(
+                "Nenašiel sa UNet konfiguračný YAML pre LatentSync. "
+                f"Skontrolujte adresár {os.path.join(latentsync_repo, 'configs', 'unet')}."
+            )
+
+        print(f"[LatentSync 1.5] UNet konfigurácia: {unet_config}")
+        print("[LatentSync 1.5] Spúšťam UNet inferenciu...")
         print("[PROGRESS:50.0%]")
-        
-        # Check if latentsync python package / submodule is available
-        try:
-            from latentsync.pipelines.lipsync_pipeline import LipsyncPipeline
-            pipeline = LipsyncPipeline.from_pretrained(os.path.dirname(ckpt_path), torch_dtype=torch.float16)
-            pipeline.to("cuda:0" if torch.cuda.is_available() else "cpu")
-            pipeline(video_path=input_video, audio_path=audio_track, output_path=lipsync_out_video, batch_size=batch_size)
-        except ImportError:
-            # Fallback to CLI invocation if LatentSync script exists
-            latentsync_script = os.path.join(abs_workspace, "LatentSync", "inference.py")
-            if os.path.exists(latentsync_script):
-                cmd = [
-                    sys.executable, latentsync_script,
-                    "--unet_config_path", config_path,
-                    "--inference_ckpt_path", ckpt_path,
-                    "--video_path", input_video,
-                    "--audio_path", audio_track,
-                    "--video_out_path", lipsync_out_video
-                ]
-                res = subprocess.run(cmd, check=True)
-            else:
-                raise RuntimeError("Modul latentsync ani inferenčný skript neboli nájdené.")
+
+        # Run the repo's own CLI. Importing the package in-process (the previous
+        # `latentsync.pipelines.lipsync_pipeline` path) never worked: that module
+        # does not exist in LatentSync 1.5. The upstream CLI also has no
+        # `--batch_size` flag, so passing one only produced an argparse error --
+        # the batch size is now reported as a log line instead of being sent.
+        print(f"[LatentSync 1.5] Nastavený batch size (nemá vplyv na tento CLI): {batch_size}")
+        cmd = [
+            sys.executable, latentsync_cli,
+            "--unet_config_path", unet_config,
+            "--inference_ckpt_path", ckpt_path,
+            "--video_path", input_video,
+            "--audio_path", audio_track,
+            "--video_out_path", lipsync_out_video,
+        ]
+        res = subprocess.run(cmd, cwd=latentsync_repo)
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"LatentSync 1.5 inferencia zlyhala s exit kódom {res.returncode}. "
+                f"Použitá konfigurácia: {unet_config}"
+            )
 
     elif engine == "musetalk":
-        musetalk_ckpt = os.path.join(abs_workspace, "models", "lipsync", "musetalk", "musetalk.json")
-        print(f"[MuseTalk] Kontrolujem checkpoint: {musetalk_ckpt}...")
-        if not os.path.exists(musetalk_ckpt):
-            raise FileNotFoundError(f"Chýba MuseTalk checkpoint na ceste: {musetalk_ckpt}")
+        # MuseTalk resolves its own weights relative to the repo (./models/...),
+        # and the ones the Setup Wizard downloads land in
+        # `models/lipsync/musetalk/`. Bridge the two by pointing every weight flag
+        # at the downloaded files explicitly instead of relying on repo defaults,
+        # which would silently fall back to paths that do not exist here.
+        musetalk_repo = os.path.join(abs_workspace, "MuseTalk")
+        musetalk_cli = None
+        for candidate in (
+            os.path.join(musetalk_repo, "scripts", "inference.py"),
+            os.path.join(musetalk_repo, "inference.py"),
+        ):
+            if os.path.exists(candidate):
+                musetalk_cli = candidate
+                break
+        if musetalk_cli is None:
+            raise RuntimeError(
+                "MuseTalk repozitár sa nenašiel na očakávanej ceste: "
+                f"{os.path.join(musetalk_repo, 'scripts', 'inference.py')}. "
+                "Spustite Setup Wizard → krok 'Lip-Sync Repozitáre'."
+            )
+
+        weights_dir = os.path.join(abs_workspace, "models", "lipsync", "musetalk")
+        unet_config = os.path.join(weights_dir, "config.json")
+        unet_weights = os.path.join(weights_dir, "unet.pth")
+        whisper_dir = os.path.join(abs_workspace, "models", "lipsync", "musetalk", "whisper")
+
+        if not os.path.exists(unet_weights):
+            raise FileNotFoundError(
+                f"Chýbajú MuseTalk váhy UNet: {unet_weights}. "
+                "Stiahnite ich v Setup Wizarde (krok 'MuseTalk Weights')."
+            )
+        if not os.path.exists(unet_config):
+            raise FileNotFoundError(
+                f"Chýba MuseTalk UNet konfigurácia: {unet_config}. "
+                "Stiahnite ju v Setup Wizarde (krok 'MuseTalk Weights')."
+            )
+
+        result_dir = os.path.join(abs_workspace, "musetalk_results")
+        os.makedirs(result_dir, exist_ok=True)
+
+        # MuseTalk's `inference.py` takes no --video_path/--audio_path flags. It
+        # reads a YAML "inference config" where each task carries its own
+        # video_path/audio_path, so that file has to be generated per run. The
+        # previous code passed --inference_config pointing at a model checkpoint,
+        # which is a different thing entirely, so the CLI never saw the input.
+        inference_config = os.path.join(result_dir, "inference_config.yaml")
+        with open(inference_config, "w", encoding="utf-8") as f:
+            f.write("dubbing_task:\n")
+            f.write(f"  video_path: {_yaml_quote(input_video)}\n")
+            f.write(f"  audio_path: {_yaml_quote(audio_track)}\n")
+            f.write(f"  result_name: {_yaml_quote(os.path.basename(lipsync_out_video))}\n")
+
+        print(f"[MuseTalk] UNet váhy: {unet_weights}")
+        print(f"[MuseTalk] Úloha (video/audio): {inference_config}")
         print("[MuseTalk] Spúšťam inferenciu...")
         print("[PROGRESS:50.0%]")
-        # MuseTalk runner
-        musetalk_script = os.path.join(abs_workspace, "MuseTalk", "inference.py")
-        if os.path.exists(musetalk_script):
-            cmd = [
-                sys.executable, musetalk_script,
-                "--inference_config", musetalk_ckpt,
-                "--video_path", input_video,
-                "--audio_path", audio_track,
-                "--result_dir", os.path.dirname(lipsync_out_video)
-            ]
-            subprocess.run(cmd, check=True)
-        else:
-            raise RuntimeError("Modul musetalk ani inferenčný skript neboli nájdené.")
+
+        cmd = [
+            sys.executable, musetalk_cli,
+            "--inference_config", inference_config,
+            "--unet_config", unet_config,
+            "--unet_model_path", unet_weights,
+            "--whisper_dir", whisper_dir,
+            "--result_dir", result_dir,
+            "--batch_size", str(batch_size),
+        ]
+        if os.environ.get("MUSE_TALK_FP16") == "1":
+            cmd.append("--use_float16")
+
+        res = subprocess.run(cmd, cwd=musetalk_repo)
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"MuseTalk inferencia zlyhala s exit kódom {res.returncode}."
+            )
+
+        # MuseTalk may honour --output_vid_name or not depending on version, so
+        # accept any freshly written .mp4 in the result dir. Stage 6 expects
+        # `lipsync_output.mp4`; without this the earlier code let stage 6 fall
+        # back to the undubbed input video.
+        produced = sorted(
+            (os.path.join(result_dir, f) for f in os.listdir(result_dir) if f.endswith(".mp4")),
+            key=os.path.getmtime,
+        )
+        if not produced:
+            raise RuntimeError(
+                f"MuseTalk nedal žiadny .mp4 výstup do {result_dir}."
+            )
+        if os.path.abspath(produced[-1]) != os.path.abspath(lipsync_out_video):
+            shutil.move(produced[-1], lipsync_out_video)
     else:
         raise ValueError(f"Neznámy lip-sync engine: '{engine}'")
+
+    if not os.path.exists(lipsync_out_video) or os.path.getsize(lipsync_out_video) == 0:
+        raise RuntimeError(
+            f"Lip-sync skončil bez výstupného súboru: {lipsync_out_video}"
+        )
 
     print("[PROGRESS:100.0%]")
     print(f"=== Fáza 5: Lip-sync úspešne dokončený -> {lipsync_out_video} ===")

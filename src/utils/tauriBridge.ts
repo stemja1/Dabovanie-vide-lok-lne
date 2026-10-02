@@ -308,6 +308,13 @@ export async function invokeCommand<T>(command: string, args: Record<string, any
       } as unknown as T;
     }
 
+    case 'get_review_utterance_metadata':
+      return {
+        document: { ...mockMetadata },
+        file_path: mockPipelineState.metadata_json_path_win,
+        is_real_run: false,
+      } as unknown as T;
+
     case 'load_utterance_metadata':
     case 'get_demo_utterance_metadata':
       return { ...mockMetadata } as unknown as T;
