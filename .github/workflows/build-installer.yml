@@ -1,0 +1,111 @@
+name: "Build Windows Installer (manual)"
+
+# Zostaví Windows inštalátor (portable .exe + MSI + NSIS) a nahrá ho ako
+# artefakt workflow, z ktorého sa dá stiahnuť. Nespúšťa sa automaticky pri
+# pushi - ide o ťažkú operáciu, ktorá sa beží na vyžiadanie.
+#
+# `build-release.yml` riešil to isté, ale vytváral GitHub Release. To pri
+# experimentovaní nie je to, čo chceš: uploadovalo by to nový release pri
+# každom pokuse. Tento workflow len vyrobí a ponúkne artefakt.
+#
+# Použitie: GitHub → Actions → "Build Windows Installer (manual)" → Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tauri_target:
+        description: "Cieľ pre tauri-action (prázdne = default)"
+        required: false
+        default: ""
+      bundle_type:
+        description: "Typ balíka (nsis | msi | all)"
+        required: false
+        default: "all"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: "Windows MSI + NSIS + portable exe"
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust stable (MSVC target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Show versions
+        shell: bash
+        run: |
+          node -v
+          npm -v
+          rustc -V
+          cargo -V
+
+      # Bez toho by bundle zlyhal: Tauri v2 pri Windows bundle očakáva
+      # WebView2 runtime a ikonu, ktorá musí mať všetky veľkosti.
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      # `build` argument musí byť prázdny, ak nie je zadaný - inak by
+      # tauri-action dostal neplatný prázdny parameter.
+      - name: Build Tauri application (portable exe + installers)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseDraft: true
+          prerelease: false
+          args: ${{ inputs.tauri_target }}
+
+      - name: Verify bundled Python scripts
+        shell: bash
+        run: |
+          # Oprava #1 z WORKFLOW_BUGFIX_NOTES: stage_1..6 musia byť zabalené
+          # ako Tauri resources, inak `ensure_scripts_synced` načíta prázdny
+          # workspace a pipeline zomrie na "can't open file". Overíme to tu,
+          # aby sa to zistilo pred stiahnutím, nie pri prvom behu.
+          echo "=== searching for bundled scripts ==="
+          found=0
+          for d in src-tauri/target/release target/release; do
+            if [ -d "$d/scripts" ]; then
+              echo "FOUND: $d/scripts"
+              ls -la "$d/scripts"
+              for i in 1 2 3 4 5 6; do
+                if [ ! -f "$d/scripts/stage_${i}_"*.py ]; then
+                  echo "::error::stage_${i} chýba v $d/scripts"
+                  found=1
+                fi
+              done
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::warning::nenašiel sa adresár scripts/ v target - balík nemusí obsahovať python fázy"
+          else
+            echo "OK: všetkých 8 python fáz je zabalených"
+          fi
+
+      - name: Upload installers as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-dubbing-windows-installer
+          if-no-files-found: warn
+          path: |
+            src-tauri/target/release/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 30
