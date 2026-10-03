@@ -21,6 +21,58 @@ async fn test_orchestrator_stage_out_of_bounds_rejection() {
     let res = orchestrator.run_single_stage(999, &cfg, None).await;
     assert!(res.is_err(), "Out of bounds stage index must return Err");
     assert!(res.unwrap_err().to_string().contains("mimo rozsahu"));
+
+    // A rejected index must not leave the orchestrator permanently busy: the
+    // bounds check used to run *after* `is_running` was claimed, so the whole
+    // app refused every further run until restart.
+    let state = orchestrator.state.lock().await;
+    assert!(
+        !state.is_running,
+        "a rejected stage index must not leave is_running stuck at true"
+    );
+    assert_eq!(
+        state.current_stage_index, 0,
+        "a rejected stage index must not corrupt current_stage_index"
+    );
+}
+
+#[tokio::test]
+async fn test_single_stage_refuses_to_start_while_pipeline_runs() {
+    let orchestrator = PipelineOrchestrator::new();
+    {
+        let mut state = orchestrator.state.lock().await;
+        state.is_running = true;
+    }
+    let cfg = AppConfig::default();
+    let res = orchestrator.run_single_stage(0, &cfg, None).await;
+    assert!(
+        res.is_err(),
+        "running a single stage during an active run must be refused"
+    );
+    assert!(res.unwrap_err().to_string().contains("už beží"));
+}
+
+#[tokio::test]
+async fn test_cancel_flag_does_not_block_next_single_stage_run() {
+    let orchestrator = PipelineOrchestrator::new();
+    // Simulate a user cancelling an earlier run. The flag is sticky by design
+    // (only the pipeline loop observes it), so a later standalone stage must
+    // clear it - otherwise every retry was killed before it did anything.
+    orchestrator.cancel();
+    assert!(orchestrator
+        .is_cancelled
+        .load(std::sync::atomic::Ordering::SeqCst));
+
+    let cfg = AppConfig::default();
+    // An out-of-range index returns Err after `reset_cancel()` runs, which is
+    // enough to observe the flag was cleared.
+    let _ = orchestrator.run_single_stage(999, &cfg, None).await;
+    assert!(
+        !orchestrator
+            .is_cancelled
+            .load(std::sync::atomic::Ordering::SeqCst),
+        "a stale cancel flag must not silently no-op the next stage"
+    );
 }
 
 #[tokio::test]

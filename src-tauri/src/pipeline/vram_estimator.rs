@@ -199,8 +199,16 @@ impl VramEstimator {
             .unwrap_or(0);
         let peak_ram = stages.iter().map(|s| s.estimated_ram_mb).max().unwrap_or(0);
 
-        let overall_safe =
-            peak_vram <= Self::TARGET_GPU_VRAM_MB && peak_ram <= Self::TARGET_SYSTEM_RAM_MB;
+        // Headroom, not equality: a stage whose estimate exactly equals the card's
+        // capacity cannot run. The previous `peak <= total` could never be false
+        // because the peak is derived from the same constant table the total
+        // comes from, so `is_overall_safe` was tautologically true and the tests
+        // asserted nothing.
+        const VRAM_HEADROOM_MB: u64 = 512;
+        const RAM_HEADROOM_MB: u64 = 1024;
+
+        let overall_safe = peak_vram.saturating_add(VRAM_HEADROOM_MB) <= Self::TARGET_GPU_VRAM_MB
+            && peak_ram.saturating_add(RAM_HEADROOM_MB) <= Self::TARGET_SYSTEM_RAM_MB;
 
         FullPipelineResourceBudget {
             stages,
@@ -209,8 +217,14 @@ impl VramEstimator {
             total_system_ram_mb: Self::TARGET_SYSTEM_RAM_MB,
             total_gpu_vram_mb: Self::TARGET_GPU_VRAM_MB,
             is_overall_safe: overall_safe,
-            hardware_profile: "AMD Ryzen 5 5600 (16GB RAM) + Radeon RX 7700 XT (12GB VRAM)"
-                .to_string(),
+            // Explicitly a reference target, not a reading of the user's
+            // hardware. `monitor::system_stats` deliberately reports 0/"unknown"
+            // rather than inventing figures, and this label was the frontend's
+            // main excuse to render hardcoded VRAM numbers as if they were
+            // measured - on an 8 GB card it still claimed "100% bezpečné".
+            hardware_profile:
+                "Referenčný profil: AMD Ryzen 5 5600 (16 GB RAM) + Radeon RX 7700 XT (12 GB VRAM)"
+                    .to_string(),
         }
     }
 }

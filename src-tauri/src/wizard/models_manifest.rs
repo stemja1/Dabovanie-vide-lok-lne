@@ -128,7 +128,15 @@ impl ModelsManifest {
                 license: "MIT".to_string(),
                 is_commercial_safe: true,
                 approximate_size_mb: 3400,
-                local_relative_path: "models/lipsync/musetalk/musetalk.json".to_string(),
+                // Must match what the installer actually writes. The installer
+                // normalises the snapshot into `unet.pth` / `config.json` /
+                // `whisper/` (that is what `stage_5_lipsync.py` reads and what it
+                // passes as --unet_model_path / --unet_config / --whisper_dir),
+                // but this manifest pointed at `musetalk.json`, a file nothing
+                // produces. Because the item is `is_required_for_mvp`, the
+                // aggregate `all_ok` was therefore permanently false on a healthy
+                // machine.
+                local_relative_path: "models/lipsync/musetalk/unet.pth".to_string(),
                 download_urls: vec![
                     "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/musetalk/musetalk.json".to_string(),
                     "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/musetalk/pytorch_model.bin".to_string(),

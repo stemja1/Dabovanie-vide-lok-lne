@@ -42,9 +42,15 @@ pub(crate) fn parse_system_packages(stdout: &str) -> (bool, bool, bool, bool) {
 }
 
 /// Returns (venv_exists, torch_ok, torch_rocm_ok, packages_ok).
+///
+/// `venv_exists` must require a positive `VENV_OK`. The previous form was
+/// `!stdout.contains("VENV_NOT_FOUND")`, which reports a *healthy* venv whenever
+/// the probe produced no output at all - exactly what happens when `wsl.exe`
+/// fails to spawn or the distro is busy. The item then showed "Virtualenv
+/// aktívny" on a machine with no venv, and a test locked that behaviour in.
 pub(crate) fn parse_python_env(stdout: &str) -> (bool, bool, bool, bool) {
     (
-        !stdout.contains("VENV_NOT_FOUND"),
+        stdout.contains("VENV_OK") && !stdout.contains("VENV_NOT_FOUND"),
         stdout.contains("TORCH_OK"),
         stdout.contains("GPU=True") || stdout.contains("HIP=6."),
         stdout.contains("PACKAGES_OK"),
@@ -524,8 +530,15 @@ mod tests {
 
     #[test]
     fn parse_python_env_empty_stdout() {
-        // Empty stdout indicates error/timeout
-        assert_eq!(parse_python_env(""), (true, false, false, false));
+        // Empty stdout means the probe never ran (wsl.exe failed to spawn, the
+        // distro was busy, the command timed out). Nothing about the venv was
+        // established, so this must NOT be reported as "venv exists".
+        assert_eq!(parse_python_env(""), (false, false, false, false));
+    }
+
+    #[test]
+    fn parse_python_env_whitespace_only_is_not_healthy() {
+        assert_eq!(parse_python_env("   \n\n"), (false, false, false, false));
     }
 
     #[test]
