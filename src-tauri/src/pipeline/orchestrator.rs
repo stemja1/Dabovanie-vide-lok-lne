@@ -111,7 +111,9 @@ impl PipelineOrchestrator {
         let source_dir = app
             .path()
             .resource_dir()
-            .map_err(|e| anyhow::anyhow!("Nepodarilo sa určiť resource priečinok aplikácie: {}", e))?
+            .map_err(|e| {
+                anyhow::anyhow!("Nepodarilo sa určiť resource priečinok aplikácie: {}", e)
+            })?
             .join("scripts");
 
         if !source_dir.join("stage_1_demux.py").is_file() {
@@ -203,8 +205,7 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
         }
         if !std::path::Path::new(trimmed).is_file() {
             let mut st = self.state.lock().await;
-            st.error_summary =
-                Some(format!("Vstupné video sa nenašlo na disku: '{}'", trimmed));
+            st.error_summary = Some(format!("Vstupné video sa nenašlo na disku: '{}'", trimmed));
             return;
         }
         if PathMapper::win_to_wsl(trimmed).starts_with("//") {
@@ -261,13 +262,17 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
         {
             let mut st = self.state.lock().await;
             if st.is_running {
-                anyhow::bail!("Pipeline už beží. Počkajte na dokončenie alebo zrušte aktuálny proces.");
+                anyhow::bail!(
+                    "Pipeline už beží. Počkajte na dokončenie alebo zrušte aktuálny proces."
+                );
             }
             // Refuse to start without a usable input video. The run used to begin
             // and fail at stage 1 with a raw ffmpeg "No such file or directory"
             // that never hinted the real problem was the missing selection.
             if st.input_video_path_wsl.trim().is_empty() {
-                anyhow::bail!("Nie je vybraný vstupný video súbor. Použite tlačidlo 'Vybrať video'.");
+                anyhow::bail!(
+                    "Nie je vybraný vstupný video súbor. Použite tlačidlo 'Vybrať video'."
+                );
             }
             if let Some(err) = st.error_summary.clone() {
                 anyhow::bail!("{}", err);
@@ -286,7 +291,9 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
         // Ensure scripts are synced to workspace directory in WSL. A failure here
         // aborts the run: every later stage would otherwise fail with a confusing
         // "file not found" for the very same missing script.
-        if let Err(e) = Self::ensure_scripts_synced(app, &config.wsl_distro, &config.workspace_dir).await {
+        if let Err(e) =
+            Self::ensure_scripts_synced(app, &config.wsl_distro, &config.workspace_dir).await
+        {
             let mut st = self.state.lock().await;
             st.is_running = false;
             let message = format!("Pipeline sa nespustil: {:#}", e);
@@ -428,11 +435,7 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
             // to a hardcoded index that only happens to be TTS with the current
             // stage list; a changed or reordered list would have resumed in the
             // wrong place. Resolve by id, and bail out loudly if TTS is absent.
-            let tts_pos = match st
-                .stages
-                .iter()
-                .position(|s| s.id == PipelineStageId::Tts)
-            {
+            let tts_pos = match st.stages.iter().position(|s| s.id == PipelineStageId::Tts) {
                 Some(pos) => pos,
                 None => {
                     st.is_running = false;
@@ -527,7 +530,9 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
             // rather than an error. `start_pipeline` and `continue_after_review`
             // already had this guard; the standalone path did not.
             if st.is_running {
-                anyhow::bail!("Pipeline už beží. Počkajte na dokončenie alebo zrušte aktuálny proces.");
+                anyhow::bail!(
+                    "Pipeline už beží. Počkajte na dokončenie alebo zrušte aktuálny proces."
+                );
             }
             st.current_stage_index = stage_index;
             st.is_running = true;
@@ -651,9 +656,7 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
 
             if lipsync_recoverable {
                 let reason = match res.error_kind {
-                    Some(ProcessErrorKind::MissingModelWeights) => {
-                        "chýbajúce váhy modelu"
-                    }
+                    Some(ProcessErrorKind::MissingModelWeights) => "chýbajúce váhy modelu",
                     Some(ProcessErrorKind::MissingPackage) => "chýbajúci Python balík",
                     Some(ProcessErrorKind::RocmDriverError) => "chyba ROCm ovládača",
                     _ => "vyčerpanie VRAM (OOM)",

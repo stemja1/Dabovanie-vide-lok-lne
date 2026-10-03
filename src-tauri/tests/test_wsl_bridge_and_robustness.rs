@@ -28,8 +28,14 @@ async fn test_orchestrator_continue_requires_paused_state() {
     let orchestrator = PipelineOrchestrator::new();
     let cfg = AppConfig::default();
     let res = orchestrator.continue_after_review(cfg, None).await;
-    assert!(res.is_err(), "continue_after_review must fail when not paused");
-    assert!(res.unwrap_err().to_string().contains("nie je v stave pozastavenia"));
+    assert!(
+        res.is_err(),
+        "continue_after_review must fail when not paused"
+    );
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("nie je v stave pozastavenia"));
 }
 
 #[test]

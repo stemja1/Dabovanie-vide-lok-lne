@@ -69,9 +69,7 @@ pub(crate) fn parse_repos(stdout: &str) -> (bool, bool) {
 pub(crate) fn build_repos_check_cmd(ws_setup: &str) -> String {
     format!(
         r#"{0} test -d "$WORKSPACE/{1}" && echo "LATENTSYNC_OK" || echo "LATENTSYNC_MISSING"; test -d "$WORKSPACE/{2}" && echo "MUSETALK_OK" || echo "MUSETALK_MISSING";"#,
-        ws_setup,
-        LATENTSYNC_DIR_NAME,
-        MUSETALK_DIR_NAME,
+        ws_setup, LATENTSYNC_DIR_NAME, MUSETALK_DIR_NAME,
     )
 }
 
@@ -584,10 +582,7 @@ mod tests {
         let cmd = build_repos_check_cmd("WORKSPACE='~/ws';");
         assert!(cmd.contains("LATENTSYNC_OK"));
         assert!(cmd.contains("MUSETALK_OK"));
-        assert_eq!(
-            parse_repos("LATENTSYNC_OK\nMUSETALK_OK\n"),
-            (true, true)
-        );
+        assert_eq!(parse_repos("LATENTSYNC_OK\nMUSETALK_OK\n"), (true, true));
     }
 
     #[test]

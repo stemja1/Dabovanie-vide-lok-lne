@@ -144,7 +144,8 @@ impl UtteranceMetadataDocument {
                     utt.start_time
                 );
             }
-            if utt.end_time.is_nan() || utt.end_time.is_infinite() || utt.end_time <= utt.start_time {
+            if utt.end_time.is_nan() || utt.end_time.is_infinite() || utt.end_time <= utt.start_time
+            {
                 bail!(
                     "Utterance {} má neplatné časovanie: start={}s, end={}s",
                     utt.id,
@@ -168,23 +169,51 @@ impl UtteranceMetadataDocument {
             if let Some(ref audio_file) = utt.target_audio_file {
                 let clean = audio_file.trim().replace('\\', "/");
                 if clean.contains('\0') {
-                    bail!("Utterance {} má neplatné nulové bajty v ceste audia", utt.id);
+                    bail!(
+                        "Utterance {} má neplatné nulové bajty v ceste audia",
+                        utt.id
+                    );
                 }
-                if clean.starts_with('/') || clean.contains("://") || (clean.len() >= 2 && clean.chars().nth(1) == Some(':')) {
-                    bail!("Utterance {} target_audio_file nesmie byť absolútna cesta: '{}'", utt.id, audio_file);
+                if clean.starts_with('/')
+                    || clean.contains("://")
+                    || (clean.len() >= 2 && clean.chars().nth(1) == Some(':'))
+                {
+                    bail!(
+                        "Utterance {} target_audio_file nesmie byť absolútna cesta: '{}'",
+                        utt.id,
+                        audio_file
+                    );
                 }
                 if clean.split('/').any(|seg| seg == "..") {
-                    bail!("Utterance {} target_audio_file obsahuje nepovolený traversal '..': '{}'", utt.id, audio_file);
+                    bail!(
+                        "Utterance {} target_audio_file obsahuje nepovolený traversal '..': '{}'",
+                        utt.id,
+                        audio_file
+                    );
                 }
             }
 
             // Validate word timings
             for (w_idx, w) in utt.words.iter().enumerate() {
-                if w.start.is_nan() || w.start.is_infinite() || w.end.is_nan() || w.end.is_infinite() {
-                    bail!("Slovo #{w_idx} v {} má neplatný čas: start={}, end={}", utt.id, w.start, w.end);
+                if w.start.is_nan()
+                    || w.start.is_infinite()
+                    || w.end.is_nan()
+                    || w.end.is_infinite()
+                {
+                    bail!(
+                        "Slovo #{w_idx} v {} má neplatný čas: start={}, end={}",
+                        utt.id,
+                        w.start,
+                        w.end
+                    );
                 }
                 if w.end < w.start {
-                    bail!("Slovo #{w_idx} v {} má end < start: {} < {}", utt.id, w.end, w.start);
+                    bail!(
+                        "Slovo #{w_idx} v {} má end < start: {} < {}",
+                        utt.id,
+                        w.end,
+                        w.start
+                    );
                 }
             }
         }

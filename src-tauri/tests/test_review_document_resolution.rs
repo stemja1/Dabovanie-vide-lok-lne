@@ -60,8 +60,8 @@ fn falls_back_when_file_missing() {
     let path = dir.join("does_not_exist_utterance_metadata.json");
 
     let state = state_with_metadata_path(Some(path.to_string_lossy().to_string()));
-    let resolved = UtteranceMetadataDocument::resolve_review_document(&state)
-        .expect("resolve must not error");
+    let resolved =
+        UtteranceMetadataDocument::resolve_review_document(&state).expect("resolve must not error");
 
     assert!(resolved.is_none(), "missing file must resolve to None");
     fs::remove_dir_all(&dir).ok();
@@ -71,13 +71,13 @@ fn falls_back_when_file_missing() {
 #[test]
 fn falls_back_when_no_path_configured() {
     let state = state_with_metadata_path(None);
-    let resolved = UtteranceMetadataDocument::resolve_review_document(&state)
-        .expect("resolve must not error");
+    let resolved =
+        UtteranceMetadataDocument::resolve_review_document(&state).expect("resolve must not error");
     assert!(resolved.is_none());
 
     let blank = state_with_metadata_path(Some("   ".to_string()));
-    let resolved_blank = UtteranceMetadataDocument::resolve_review_document(&blank)
-        .expect("resolve must not error");
+    let resolved_blank =
+        UtteranceMetadataDocument::resolve_review_document(&blank).expect("resolve must not error");
     assert!(
         resolved_blank.is_none(),
         "whitespace-only path must resolve to None"

@@ -432,8 +432,7 @@ impl WslExecutor {
         let oom_killed = lower.contains("oom-killer")
             || lower.contains("out of memory: kill")
             || lower.contains("killed process")
-            || (lower.contains("memory cgroup out of memory")
-                && lower.contains("kill"));
+            || (lower.contains("memory cgroup out of memory") && lower.contains("kill"));
         if oom_killed {
             return (
                 Some(ProcessErrorKind::OutOfMemorySystem),

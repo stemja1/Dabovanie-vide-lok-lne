@@ -148,10 +148,7 @@ impl WizardInstaller {
                     if let Some(ref tx) = log_tx {
                         let _ = tx.send(ProcessLogLine {
                             stream: "system".to_string(),
-                            message: format!(
-                                "Inštaláciu WSL sa nepodarilo spustiť: {}",
-                                e
-                            ),
+                            message: format!("Inštaláciu WSL sa nepodarilo spustiť: {}", e),
                             timestamp_ms: chrono::Utc::now().timestamp_millis(),
                             is_progress: false,
                             progress_percent: None,
@@ -686,7 +683,8 @@ else:
 print('HOTOVO', flush=True)
 "
 "#,
-            venv_setup, ws_setup,
+            venv_setup,
+            ws_setup,
             PathMapper::escape_bash_arg(model_id)
         );
 
