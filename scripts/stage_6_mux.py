@@ -10,7 +10,12 @@ import argparse
 import os
 import sys
 import json
+import shutil
 import subprocess
+
+# Re-encoding the deliverable is the longest step of this stage. Without a
+# timeout a wedged ffmpeg kept the stage alive until the 30 min Rust budget.
+MUX_SUBPROCESS_TIMEOUT = 30 * 60
 
 def format_timestamp_srt(seconds: float) -> str:
     """Formats a timestamp as an SRT cue time.
@@ -28,6 +33,12 @@ def format_timestamp_srt(seconds: float) -> str:
 
 def generate_subtitles(meta_path: str, srt_out_path: str):
     if not os.path.exists(meta_path):
+        # Silently returning produced a "successful" stage with no subtitles at
+        # all and no explanation anywhere in the log.
+        print(
+            f"[Mux] UPOZORNENIE: chýba súbor metadát, titulky sa nevygenerovali: {meta_path}",
+            file=sys.stderr,
+        )
         return
     with open(meta_path, "r", encoding="utf-8") as f:
         doc = json.load(f)
@@ -42,11 +53,15 @@ def generate_subtitles(meta_path: str, srt_out_path: str):
                 continue
             start = max(0.0, float(utt.get("start_time", 0.0) or 0.0))
             end = max(start + 0.2, float(utt.get("end_time", start + 1.0) or (start + 1.0)))
+            # Only emit lines that exist. Writing f"{zh}\n{sk}" unconditionally
+            # produced a cue starting with a blank line whenever the translation
+            # was still empty, which players render as an empty first line.
+            body = "\n".join(line for line in (zh, sk) if line)
             written += 1
             f.write(
                 f"{written}\n"
                 f"{format_timestamp_srt(start)} --> {format_timestamp_srt(end)}\n"
-                f"{zh}\n{sk}\n\n"
+                f"{body}\n\n"
             )
     print(f"[Mux] Titulky vygenerované -> {srt_out_path} ({written} cues)")
 
@@ -89,19 +104,21 @@ def run_mux(input_video: str, output_video: str, workspace: str, meta_path: str,
     if os.path.exists(orig_audio):
         # Duck the original track under the dubbed voice.
         #
-        # `amix=duration=first` pins the mix to the length of the original audio
-        # so the output is not cut short; the previous `duration=longest` combined
-        # with `-shortest` truncated the result to whichever input was shorter
-        # (frequently the dubbed track), silently dropping the end of the video.
+        # Both inputs are `apad`-ed to an endless stream and the mix uses
+        # `duration=longest`, so the audio can never end before the video does.
+        # `-shortest` then resolves against the (unpadded) video stream only, so
+        # the output is exactly as long as the lip-synced video.
         #
-        # `apad` on the voice track pads it to the background length so the mix
-        # never runs out of audio early, and the whole graph is anchored to the
-        # video with `amix=duration=longest` on a `apad`-ed original plus
-        # `-shortest`, which keeps the result exactly as long as the video.
+        # The previous graph used `amix=duration=first` with no `apad` at all
+        # (despite the comment above it claiming otherwise), which anchored the
+        # mix to the original audio length and let `-shortest` cut the deliverable
+        # to `min(video, original_audio)`. Any source whose audio stream is
+        # shorter than its video lost the tail of the clip, and the dubbed track
+        # - which stage 4 makes `timeline_end + 3 s` long - was cut with it.
         filter_complex = (
-            f"[0:a]volume={bg_vol:.4f}[bg];"
-            f"[1:a]aresample=24000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1.0[voice];"
-            f"[bg][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
+            f"[0:a]volume={bg_vol:.4f},apad[bg];"
+            f"[1:a]aresample=24000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad[voice];"
+            f"[bg][voice]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[aout]"
         )
         cmd = [
             "ffmpeg", "-y",
@@ -127,13 +144,14 @@ def run_mux(input_video: str, output_video: str, workspace: str, meta_path: str,
             "-i", dubbed_speech,
             "-map", "0:v:0",
             "-map", "1:a:0",
+            "-af", "apad",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "256k",
             "-shortest",
             output_video
         ]
 
-    res = subprocess.run(cmd, capture_output=True)
+    res = subprocess.run(cmd, capture_output=True, timeout=MUX_SUBPROCESS_TIMEOUT)
     if res.returncode != 0:
         raise RuntimeError(
             "FFmpeg muxing zlyhal: " + res.stderr.decode("utf-8", errors="replace")[-2000:]
@@ -141,6 +159,18 @@ def run_mux(input_video: str, output_video: str, workspace: str, meta_path: str,
 
     if not os.path.exists(output_video) or os.path.getsize(output_video) == 0:
         raise RuntimeError(f"Muxing nevytvoril výstupný súbor: {output_video}")
+
+    # The SRT used to stay in the workspace and never reached the deliverable
+    # directory, so the user got an MP4 with no subtitles plus an orphaned file
+    # they never saw.
+    final_srt = os.path.splitext(os.path.abspath(output_video))[0] + ".srt"
+    try:
+        if os.path.exists(srt_file) and os.path.abspath(srt_file) != os.path.abspath(final_srt):
+            shutil.copy2(srt_file, final_srt)
+            print(f"[Mux] Titulky uložené vedľa videa: {final_srt}")
+    except OSError as e:
+        print(f"[Mux] UPOZORNENIE: titulky sa nepodarilo skopírovať vedľa videa: {e}", file=sys.stderr)
+
     print("[PROGRESS:100.0%]")
     print(f"=== Fáza 6: Výsledné video úspešne vytvorené -> {output_video} ===")
 

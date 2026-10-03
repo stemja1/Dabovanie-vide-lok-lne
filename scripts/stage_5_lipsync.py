@@ -249,17 +249,23 @@ def run_lipsync(input_video: str, workspace: str, meta_path: str, engine: str, b
                 f"MuseTalk inferencia zlyhala s exit kódom {res.returncode}."
             )
 
-        # MuseTalk may honour --output_vid_name or not depending on version, so
-        # accept any freshly written .mp4 in the result dir. Stage 6 expects
-        # `lipsync_output.mp4`; without this the earlier code let stage 6 fall
-        # back to the undubbed input video.
-        produced = sorted(
-            (os.path.join(result_dir, f) for f in os.listdir(result_dir) if f.endswith(".mp4")),
-            key=os.path.getmtime,
-        )
+        # MuseTalk writes the result to
+        #   os.path.join(args.result_dir, args.version, args.output_vid_name)
+        # and `--version` defaults to `v15`, which this stage never passes. A flat
+        # `os.listdir(result_dir)` therefore only ever saw the YAML we just wrote
+        # and `produced` stayed empty, so the MuseTalk path could never succeed.
+        # Walk the tree and take the newest .mp4.
+        produced = []
+        for root, _dirs, files in os.walk(result_dir):
+            for f in files:
+                if f.lower().endswith(".mp4"):
+                    produced.append(os.path.join(root, f))
+        produced.sort(key=os.path.getmtime)
         if not produced:
             raise RuntimeError(
-                f"MuseTalk nedal žiadny .mp4 výstup do {result_dir}."
+                f"MuseTalk nedal žiadny .mp4 výstup pod {result_dir}. "
+                "Pozrite si, či sa v logoch neobjavila chyba pri čítaní "
+                "inference_config.yaml."
             )
         if os.path.abspath(produced[-1]) != os.path.abspath(lipsync_out_video):
             shutil.move(produced[-1], lipsync_out_video)

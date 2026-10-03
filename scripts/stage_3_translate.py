@@ -10,7 +10,14 @@ import datetime
 import os
 import sys
 import json
-import torch
+
+# `import torch` at module scope meant `--simulate` still required a full 2 GB+
+# PyTorch install. The model path below is the only consumer, so make it optional:
+# a missing torch is only an error when a real translation is actually requested.
+try:
+    import torch
+except ImportError:  # pragma: no cover - only reachable in simulate mode
+    torch = None
 
 def run_translation(workspace: str, meta_path: str, model_id: str, src_lang: str, tgt_lang: str, simulate: bool = False):
     print(f"=== Fáza 3: Preklad SK → ZH ({model_id}) ===")
@@ -27,6 +34,16 @@ def run_translation(workspace: str, meta_path: str, model_id: str, src_lang: str
     utterances = data.get("utterances", [])
     total = len(utterances)
 
+    # With an empty utterance list the translation block was skipped entirely
+    # (`elif total > 0`) and the stage wrote an empty document, printed
+    # "Preklad úspešne dokončený" and exited 0. Downstream stages then produced a
+    # video with no dubbing at all. Fail loudly instead, like stage 2 does.
+    if total == 0 and not simulate:
+        raise RuntimeError(
+            "Metadáta neobsahujú žiadne repliky na preloženie. "
+            "Spustite najprv fázu 2 (ASR) a uistite sa, že rozpoznala reč vo videu."
+        )
+
     if simulate:
         print("[Preklad] Spúšťam explicitný simulačný režim pre preklad...")
         sk_zh_demo = {
@@ -38,6 +55,11 @@ def run_translation(workspace: str, meta_path: str, model_id: str, src_lang: str
             sk_text = utt.get("slovak_text", "")
             utt["chinese_text"] = sk_zh_demo.get(sk_text, "本地AI视频配音：从斯洛伐克语到中文。")
     elif total > 0:
+        if torch is None:
+            raise RuntimeError(
+                "Preklad vyžaduje PyTorch, ktorý v tomto prostredí chýba. "
+                "Nainštalujte ho cez Setup Wizard, alebo použite --simulate."
+            )
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         print(f"[Preklad] Inicializujem NLLB model na zariadení: {device}")
 
@@ -103,7 +125,16 @@ def run_translation(workspace: str, meta_path: str, model_id: str, src_lang: str
         "is_verified_by_user": False
     }
 
-    target_save_path = meta_path if meta_path else os.path.join(workspace, "utterance_metadata.json")
+    # `target_save_path` used to be `meta_path` verbatim. When the caller passes a
+    # workspace-relative name (which is how this stage is documented and how the
+    # Rust orchestrator calls it - it resolves --meta inside the workspace), the
+    # file was written relative to the PROCESS CWD instead of into the workspace.
+    # The result was a document on disk that no later stage ever read, while the
+    # stage printed a success message naming that path.
+    target_save_path = meta_path if meta_path else "utterance_metadata.json"
+    if not os.path.isabs(target_save_path):
+        target_save_path = os.path.join(workspace, target_save_path)
+    os.makedirs(os.path.dirname(target_save_path) or ".", exist_ok=True)
     with open(target_save_path, "w", encoding="utf-8") as f:
         json.dump(final_doc, f, ensure_ascii=False, indent=2)
 

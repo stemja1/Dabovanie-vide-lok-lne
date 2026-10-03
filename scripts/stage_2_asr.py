@@ -21,6 +21,16 @@ def _asr_result_to_whisper_format(segments):
     """
     chunks = []
     for seg in segments:
+        # `faster-whisper` yields dataclasses (`Segment`, `Word`), not dicts, so
+        # calling `.get()` on them raised AttributeError and killed the stage on
+        # the very first segment. Normalise both shapes here.
+        if not isinstance(seg, dict):
+            seg = {
+                "text": getattr(seg, "text", None),
+                "start": getattr(seg, "start", None),
+                "end": getattr(seg, "end", None),
+                "words": getattr(seg, "words", None),
+            }
         text = (seg.get("text") or "").strip()
         if not text:
             continue
@@ -29,15 +39,26 @@ def _asr_result_to_whisper_format(segments):
         chunk = {"text": text, "timestamp": (start, end)}
         words = seg.get("words")
         if words:
-            chunk["words"] = [
-                {
-                    "word": (w.get("word") or w.get("text") or "").strip(),
-                    "start": float(w.get("start") or start),
-                    "end": float(w.get("end") or end),
-                }
-                for w in words
-                if (w.get("word") or w.get("text"))
-            ]
+            normalized = []
+            for w in words:
+                if not isinstance(w, dict):
+                    w = {
+                        "word": getattr(w, "word", None) or getattr(w, "text", None),
+                        "start": getattr(w, "start", None),
+                        "end": getattr(w, "end", None),
+                    }
+                word_text = (w.get("word") or w.get("text") or "").strip()
+                if not word_text:
+                    continue
+                normalized.append(
+                    {
+                        "word": word_text,
+                        "start": float(w.get("start") if w.get("start") is not None else start),
+                        "end": float(w.get("end") if w.get("end") is not None else end),
+                    }
+                )
+            if normalized:
+                chunk["words"] = normalized
         chunks.append(chunk)
     return {"chunks": chunks}
 

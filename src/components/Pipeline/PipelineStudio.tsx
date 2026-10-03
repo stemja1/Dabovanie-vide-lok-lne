@@ -33,6 +33,10 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
   const [budget, setBudget] = useState<FullPipelineResourceBudget | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  // `start_pipeline_execution` returns Ok(()) immediately and the pre-flight
+  // failures (no video, no WSL, script sync failure) are only reported through
+  // the backend's state, so the user needs somewhere to actually see them.
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
@@ -56,8 +60,23 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
       setPipelineState(st);
     });
 
+    // `pipeline_state_updated` is emitted by the backend, but the backend has no
+    // push while a stage runs in older builds and the initial event can be missed
+    // entirely (the app was showing mock data when `listen()` was denied). Poll
+    // while a run is in flight so progress, the Stop button and the disabled
+    // controls are driven by real state instead of never updating.
+    const poll = window.setInterval(async () => {
+      try {
+        const st = await invokeCommand<PipelineExecutionState>('get_pipeline_state');
+        setPipelineState((prev) => (prev?.is_running || st?.is_running ? st : prev ?? st));
+      } catch {
+        // Backend not reachable - keep whatever we already have.
+      }
+    }, 1000);
+
     return () => {
       unsubState();
+      window.clearInterval(poll);
     };
   }, []);
 
@@ -79,6 +98,7 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
       await fetchData();
     } catch (err) {
       console.error('Failed to start pipeline', err);
+      setErrorMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
     }
@@ -119,9 +139,33 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
   const stages = pipelineState?.stages || [];
   const hasInput = !!pipelineState?.input_video_path_win;
   const isCompleted = stages.length > 0 && stages.every((s) => s.status === 'completed');
+  // Show whatever the backend put into `error_summary`; it used to be written but
+  // never rendered anywhere, so failures appeared to do nothing at all.
+  const backendError = pipelineState?.error_summary ?? null;
+  const visibleError = errorMessage ?? backendError;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-12">
+      {visibleError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2.5 rounded-lg border border-rose-800/60 bg-rose-950/40 px-4 py-3 text-sm text-rose-200"
+        >
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-medium">Pipeline sa nepodarilo spustiť</p>
+            <p className="mt-0.5 break-words text-rose-300/90">{visibleError}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setErrorMessage(null)}
+            className="text-rose-400 hover:text-rose-200 text-xs"
+          >
+            Zavrieť
+          </button>
+        </div>
+      )}
+
       {/* Top Controls & Status Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>

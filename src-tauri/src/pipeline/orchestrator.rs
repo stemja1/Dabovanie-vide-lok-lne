@@ -175,6 +175,22 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
         // already-WSL path, or from a file that does not exist, produced commands
         // that only failed much later inside ffmpeg.
         let trimmed = win_video_path.trim();
+        // Clear the previous selection up front. Every rejection branch below used
+        // to leave the old `input_video_path_win` in place, so the UI still showed
+        // "video selected" with the Start button enabled while the new path was
+        // rejected.
+        {
+            let mut st = self.state.lock().await;
+            st.input_video_path_win = String::new();
+            st.input_video_path_wsl = String::new();
+            st.output_video_path_win = None;
+            st.output_video_path_wsl = None;
+            st.metadata_json_path_win = None;
+            st.metadata_json_path_wsl = None;
+            st.error_summary = None;
+            st.stages = StageFactory::build_default_stages();
+            st.current_stage_index = 0;
+        }
         if trimmed.is_empty() {
             let mut st = self.state.lock().await;
             st.error_summary = Some("Vstupná cesta k videu je prázdna.".to_string());
@@ -273,7 +289,18 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
         if let Err(e) = Self::ensure_scripts_synced(app, &config.wsl_distro, &config.workspace_dir).await {
             let mut st = self.state.lock().await;
             st.is_running = false;
-            st.error_summary = Some(format!("Pipeline sa nespustil: {:#}", e));
+            let message = format!("Pipeline sa nespustil: {:#}", e);
+            st.error_summary = Some(message.clone());
+            // Also surface it on the stage the user is looking at. `error_summary`
+            // is not rendered anywhere in the UI, so without this the single most
+            // common startup failure was completely invisible.
+            if let Some(s) = st.stages.first_mut() {
+                s.status = StageStatus::Failed;
+                s.error_message = Some(message);
+                s.user_suggestion = Some(
+                    "Spustite znova Setup Wizard alebo kliknite na 'Opakovať krok'.".to_string(),
+                );
+            }
             if let Some(ref tx) = log_tx {
                 let _ = tx.send(ProcessLogLine {
                     stream: "system".to_string(),
@@ -494,7 +521,16 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
     ) -> Result<()> {
         let (stage_id, _stage_name) = {
             let mut st = self.state.lock().await;
+            // Two pipelines running at once write the same `audio_segments/*.wav`,
+            // `{stem}_utterance_metadata.json` and `lipsync_output.mp4`, and both
+            // overwrite `current_stage_index`. The result is corrupted output
+            // rather than an error. `start_pipeline` and `continue_after_review`
+            // already had this guard; the standalone path did not.
+            if st.is_running {
+                anyhow::bail!("Pipeline už beží. Počkajte na dokončenie alebo zrušte aktuálny proces.");
+            }
             st.current_stage_index = stage_index;
+            st.is_running = true;
             if let Some(s) = st.stages.get_mut(stage_index) {
                 s.status = StageStatus::Running;
                 s.progress_percent = 0.0;
@@ -503,9 +539,19 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
                 s.error_message = None;
                 (s.id, s.name.clone())
             } else {
+                // Bounds-check before claiming the run, otherwise a bad index
+                // leaves `is_running` stuck at true and blocks the whole app.
+                st.is_running = false;
                 return Err(anyhow::anyhow!("Index fázy {} mimo rozsahu", stage_index));
             }
         };
+
+        // `is_cancelled` is sticky: `cancel()` sets it and only `start_pipeline`
+        // ever cleared it. After any cancel, every later single-stage run was
+        // killed on its first poll iteration and silently reported `Ok(())`,
+        // flipping the stage to `Skipped` without running anything. Clear it
+        // here exactly like `start_pipeline` does at its own start.
+        self.reset_cancel();
 
         let (input_wsl, output_wsl, meta_wsl) = {
             let st = self.state.lock().await;
@@ -572,11 +618,20 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
 
         // If cancelled by user
         if res.error_kind == Some(ProcessErrorKind::Cancelled) {
-            let mut st = self.state.lock().await;
-            if let Some(s) = st.stages.get_mut(stage_index) {
-                s.status = StageStatus::Skipped;
+            // Returning `Ok(())` here was the worst variant of this bug: if the
+            // cancelled stage was the last one, `start_pipeline`'s loop simply
+            // ended and fell through to the "PIPELINE ÚSPEŠNE DOKONČENÝ"
+            // message with 100 % progress. A cancellation is not a success.
+            {
+                let mut st = self.state.lock().await;
+                st.is_running = false;
+                if let Some(s) = st.stages.get_mut(stage_index) {
+                    s.status = StageStatus::Skipped;
+                    s.user_suggestion =
+                        Some("Fáza bola zrušená používateľom pred dokončením.".to_string());
+                }
             }
-            return Ok(());
+            anyhow::bail!("Fáza {} bola zrušená používateľom.", stage_index + 1);
         }
 
         // Handle failure and potential LatentSync OOM fallback to MuseTalk
@@ -640,6 +695,8 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
 
                 if retry_res.success {
                     let mut st = self.state.lock().await;
+                    st.is_running = false;
+                    st.error_summary = None;
                     st.active_lipsync_engine = "MuseTalk (Fallback)".to_string();
                     if let Some(s) = st.stages.get_mut(stage_index) {
                         s.status = StageStatus::Completed;
@@ -673,6 +730,7 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
             // but the wrapper's own diagnostics (OOM/ROCm/missing weights) are often
             // the actionable part, so include the remedy when there is one.
             let mut st = self.state.lock().await;
+            st.is_running = false;
             let stage_name = if let Some(s) = st.stages.get_mut(stage_index) {
                 s.status = StageStatus::Failed;
                 s.error_message = Some(res.stderr.clone());
@@ -696,6 +754,11 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
         // Success
         {
             let mut st = self.state.lock().await;
+            st.is_running = false;
+            // A stage that now succeeds must clear the previous failure, or
+            // `start_pipeline` keeps bailing on the stale `error_summary` and the
+            // user cannot start a new run at all.
+            st.error_summary = None;
             if let Some(s) = st.stages.get_mut(stage_index) {
                 s.status = StageStatus::Completed;
                 s.progress_percent = 100.0;

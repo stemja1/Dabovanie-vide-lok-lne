@@ -286,14 +286,16 @@ export async function invokeCommand<T>(command: string, args: Record<string, any
     }
 
     case 'check_rocm_status': {
+      // Must use the real Rust field names (`RocmStatusInfo`), otherwise the mock
+      // hides the mismatch: the browser preview looked fine while the packaged
+      // app read `undefined` for every field.
       return {
-        rocm_available: false,
+        is_rocm_available: false,
         rocm_version: null,
-        gpu_name: null,
-        total_vram_mb: 0,
-        free_vram_mb: 0,
-        hip: false,
-        error: 'Simulácia v prehliadači (Tauri runtime nie je pripojený)',
+        gpu_device_name: null,
+        total_vram_mb: null,
+        free_vram_mb: null,
+        is_hip_available: false,
       } as unknown as T;
     }
 

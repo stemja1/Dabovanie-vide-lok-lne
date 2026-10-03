@@ -19,6 +19,30 @@ import struct
 import math
 import gc
 
+# A hung child (piper waiting on stdin, a wedged ffmpeg) used to block the whole
+# stage until the 2 h Rust-side budget expired. The wrapper timeout exists, but a
+# per-call timeout reports the problem at the right place instead.
+TTS_SUBPROCESS_TIMEOUT = 300  # seconds per single TTS/ffmpeg call
+
+
+def _resolve_inside_workspace(abs_workspace: str, relative: str) -> str:
+    """Join `relative` onto the workspace and refuse anything that escapes it.
+
+    `str.startswith` is not a containment check: a sibling directory such as
+    `<workspace>_evil` also passes it. `commonpath` compares path components.
+    """
+    candidate = os.path.abspath(os.path.join(abs_workspace, relative))
+    try:
+        inside = os.path.commonpath([candidate, abs_workspace]) == abs_workspace
+    except ValueError:  # different drives on Windows
+        inside = False
+    if not inside:
+        raise ValueError(
+            f"Bezpečnostná chyba: Cieľový súbor '{relative}' uniká mimo workspace!"
+        )
+    return candidate
+
+
 def adjust_audio_speed(input_wav: str, output_wav: str, speed_factor: float):
     """
     Adjusts audio speed using ffmpeg atempo filters.
@@ -46,7 +70,13 @@ def adjust_audio_speed(input_wav: str, output_wav: str, speed_factor: float):
         "-filter:a", filter_str,
         "-vn", output_wav
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    subprocess.run(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True,
+        timeout=TTS_SUBPROCESS_TIMEOUT,
+    )
 
 def run_tts(workspace: str, meta_path: str, engine: str, voice: str, global_speed: float, simulate: bool = False):
     print(f"=== Fáza 4: Čínska Syntéza Reči (Engine: {engine}, Voice: {voice}, Rýchlosť: {global_speed:.2f}) ===")
@@ -79,15 +109,17 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, global_spee
     print(f"[TTS] Začínam generovanie pre {total} replík...")
 
     for i, utt in enumerate(utterances):
-        utt_id = utt.get("id", f"utt_{i+1:03d}")
-        zh_text = utt.get("chinese_text", "").strip()
-        target_duration = max(0.2, utt.get("duration", 3.0))
-        rel_target = utt.get("target_audio_file", f"audio_segments/{utt_id}.wav")
+        utt_id = utt.get("id") or f"utt_{i+1:03d}"
+        zh_text = (utt.get("chinese_text") or "").strip()
+        # `duration` comes from a JSON file the UI lets the user edit, so `null`
+        # or a string must not crash the whole stage.
+        try:
+            target_duration = max(0.2, float(utt.get("duration") or 3.0))
+        except (TypeError, ValueError):
+            target_duration = 3.0
+        rel_target = utt.get("target_audio_file") or f"audio_segments/{utt_id}.wav"
 
-        # Security check: Prevent path traversal outside workspace
-        out_seg_path = os.path.abspath(os.path.join(abs_workspace, rel_target))
-        if not out_seg_path.startswith(abs_workspace):
-            raise ValueError(f"Bezpečnostná chyba: Cieľový súbor '{rel_target}' uniká mimo workspace!")
+        out_seg_path = _resolve_inside_workspace(abs_workspace, rel_target)
 
         os.makedirs(os.path.dirname(out_seg_path), exist_ok=True)
 
@@ -125,15 +157,32 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, global_spee
                     raw_bytes.extend(struct.pack("<h", max(-32768, min(32767, sample_int))))
                 wf.writeframes(raw_bytes)
         elif engine == "piper":
-            piper_model = os.path.join(abs_workspace, "models/tts/piper/zh_CN-huayan-medium.onnx")
+            # The voice name from Settings must actually select the model, otherwise
+            # the selector silently does nothing on the default engine.
+            piper_model = os.path.join(
+                abs_workspace, "models/tts/piper", f"{voice}.onnx"
+            )
             if not os.path.exists(piper_model):
-                raise FileNotFoundError(f"Chýba Piper model na ceste: {piper_model}. Stiahnite ho v Setup Wizarde.")
-            
-            # Run Piper CLI
+                fallback = os.path.join(
+                    abs_workspace, "models/tts/piper/zh_CN-huayan-medium.onnx"
+                )
+                if not os.path.exists(fallback):
+                    raise FileNotFoundError(
+                        f"Chýba Piper model na ceste: {piper_model}. "
+                        "Stiahnite ho v Setup Wizarde."
+                    )
+                piper_model = fallback
+
+            # Invoke Piper as a module of the interpreter running this script.
+            # Resolving the bare `piper` console script through PATH fails because
+            # the orchestrator never activates the venv, so `$VENV/bin` is not on
+            # PATH and the default engine died with FileNotFoundError.
             res = subprocess.run(
-                ["piper", "--model", piper_model, "--output_file", out_seg_path],
+                [sys.executable, "-m", "piper", "--model", piper_model,
+                 "--output_file", out_seg_path],
                 input=zh_text.encode("utf-8"),
-                capture_output=True
+                capture_output=True,
+                timeout=TTS_SUBPROCESS_TIMEOUT,
             )
             if res.returncode != 0:
                 raise RuntimeError(f"Piper TTS zlyhal: {res.stderr.decode('utf-8', errors='replace')}")
@@ -186,21 +235,37 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, global_spee
     )
     total_dur = max(timeline_end, float(doc.get("total_duration", 0.0) or 0.0))
     total_samples = int(sample_rate * (total_dur + 3.0))
-    master_samples = [0] * total_samples
+
+    # The master track used to be a Python `list[int]` filled by a per-sample
+    # loop and finally written with `struct.pack(f"<{n}h", *samples)`. A 10-minute
+    # video is ~14.5 M samples: that is roughly 0.5 GB of boxed ints, a
+    # 14.5 M-argument call, and minutes of pure-Python looping on a machine that
+    # also has to hold Whisper/NLLB. numpy is already a hard dependency via
+    # onnxruntime, and the stdlib fallback keeps the stage working without it.
+    try:
+        import numpy as np
+
+        master = np.zeros(total_samples, dtype=np.int32)
+        use_numpy = True
+    except ImportError:  # pragma: no cover - numpy is normally present
+        master = [0] * total_samples
+        use_numpy = False
 
     missing_segments = []
     truncated_segments = []
 
-    for utt in utterances:
+    for idx_utt, utt in enumerate(utterances):
+        utt_id = utt.get("id") or f"utt_{idx_utt + 1:03d}"
         st_sample = int(float(utt.get("start_time", 0.0) or 0.0) * sample_rate)
-        seg_file = os.path.abspath(
-            os.path.join(
-                abs_workspace,
-                utt.get("target_audio_file", f"audio_segments/{utt['id']}.wav"),
-            )
+        # `dict.get(key, default)` evaluates the default eagerly, so the old
+        # f-string here raised KeyError for any utterance without an `id` even
+        # when `target_audio_file` was present.
+        seg_file = _resolve_inside_workspace(
+            abs_workspace,
+            utt.get("target_audio_file") or f"audio_segments/{utt_id}.wav",
         )
         if not os.path.exists(seg_file):
-            missing_segments.append(utt.get("id", "?"))
+            missing_segments.append(utt_id)
             continue
 
         with wave.open(seg_file, "r") as wf:
@@ -215,44 +280,66 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, global_spee
 
         if sampwidth != 2:
             print(
-                f"[TTS] UPOZORNENIE: {utt.get('id')} má {sampwidth * 8}-bit vzorkovanie, preskočujem.",
+                f"[TTS] UPOZORNENIE: {utt_id} má {sampwidth * 8}-bit vzorkovanie, preskočujem.",
                 file=sys.stderr,
             )
-            missing_segments.append(utt.get("id", "?"))
+            missing_segments.append(utt_id)
             continue
 
-        n_samples = len(frames) // (2 * n_channels)
-        seg_data = struct.unpack(f"<{n_samples * n_channels}h", frames)
-        if n_channels > 1:
-            seg_data = tuple(
-                sum(seg_data[i : i + n_channels]) // n_channels
-                for i in range(0, n_samples * n_channels, n_channels)
-            )
+        if use_numpy:
+            seg = np.frombuffer(frames, dtype="<i2").astype(np.int32)
+            if n_channels > 1:
+                usable = (len(seg) // n_channels) * n_channels
+                seg = seg[:usable].reshape(-1, n_channels).mean(axis=1).astype(np.int32)
+        else:
+            n_samples = len(frames) // (2 * n_channels)
+            seg_data = struct.unpack(f"<{n_samples * n_channels}h", frames)
+            if n_channels > 1:
+                seg_data = tuple(
+                    sum(seg_data[i : i + n_channels]) // n_channels
+                    for i in range(0, n_samples * n_channels, n_channels)
+                )
+            seg = list(seg_data)
+            n_samples = len(seg)
 
         # Resample linearne, aby sa segment nestal vyšším/pomalejším.
         if seg_rate != sample_rate:
             ratio = seg_rate / float(sample_rate)
-            out_len = max(1, int(n_samples / ratio))
-            resampled = [0] * out_len
-            for i in range(out_len):
-                src = i * ratio
-                i0 = int(src)
-                i1 = min(i0 + 1, n_samples - 1)
-                frac = src - i0
-                resampled[i] = int(seg_data[i0] * (1.0 - frac) + seg_data[i1] * frac)
-            seg_data = resampled
+            if use_numpy:
+                src_len = len(seg)
+                out_len = max(1, int(src_len / ratio))
+                pos = np.arange(out_len, dtype=np.float64) * ratio
+                i0 = np.clip(pos.astype(np.int64), 0, src_len - 1)
+                i1 = np.clip(i0 + 1, 0, src_len - 1)
+                frac = pos - i0
+                seg = (seg[i0] * (1.0 - frac) + seg[i1] * frac).astype(np.int32)
+            else:
+                out_len = max(1, int(n_samples / ratio))
+                resampled = [0] * out_len
+                for i in range(out_len):
+                    src = i * ratio
+                    i0 = int(src)
+                    i1 = min(i0 + 1, n_samples - 1)
+                    frac = src - i0
+                    resampled[i] = int(seg[i0] * (1.0 - frac) + seg[i1] * frac)
+                seg = resampled
 
         if st_sample >= total_samples:
-            truncated_segments.append(utt.get("id", "?"))
+            truncated_segments.append(utt_id)
             continue
 
-        for idx, sample in enumerate(seg_data):
-            target_idx = st_sample + idx
-            if target_idx >= total_samples:
-                truncated_segments.append(utt.get("id", "?"))
-                break
-            cur = master_samples[target_idx] + sample
-            master_samples[target_idx] = max(-32768, min(32767, cur))
+        room = total_samples - st_sample
+        if len(seg) > room:
+            truncated_segments.append(utt_id)
+            seg = seg[:room]
+
+        if use_numpy:
+            master[st_sample : st_sample + len(seg)] += seg
+        else:
+            for idx, sample in enumerate(seg):
+                target_idx = st_sample + idx
+                cur = master[target_idx] + sample
+                master[target_idx] = max(-32768, min(32767, cur))
 
     if missing_segments:
         print(
@@ -267,17 +354,31 @@ def run_tts(workspace: str, meta_path: str, engine: str, voice: str, global_spee
             file=sys.stderr,
         )
 
-    with wave.open(master_dubbed_wav, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(struct.pack(f"<{len(master_samples)}h", *master_samples))
+    # Clip once, at the end: summing int32 segments can exceed the int16 range
+    # exactly where two replikas overlap.
+    if use_numpy:
+        pcm = np.clip(master, -32768, 32767).astype("<i2").tobytes()
+        is_silent = not bool(np.any(master))
+    else:
+        pcm = struct.pack(f"<{len(master)}h", *master)
+        is_silent = not any(master)
 
-    if not missing_segments and not truncated_segments and not any(master_samples):
+    # The silence check used to require `missing_segments` and
+    # `truncated_segments` to be empty, which is precisely the case where every
+    # TTS segment failed: the guard was skipped, a silent 24 kHz WAV was written
+    # and the stage exited 0, so lip-sync and mux produced a plausible video
+    # with no dubbing at all. Silence is always an error here.
+    if is_silent:
         raise RuntimeError(
             "TTS stavila zarovnanú stopu, ale tá je úplne tichá. "
             "Skontrolujte vygenerované TTS segmenty a nastavenia hlasu."
         )
+
+    with wave.open(master_dubbed_wav, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
 
     gc.collect()
 

@@ -43,15 +43,21 @@ impl SystemStatsMonitor {
         sys.refresh_memory();
         sys.refresh_cpu_all();
 
-        let total_ram_kb = sys.total_memory();
-        let used_ram_kb = sys.used_memory();
-        let total_ram_mb = total_ram_kb / 1024;
-        let used_ram_mb = used_ram_kb / 1024;
-        let ram_pct = if total_ram_mb > 0 {
-            (used_ram_mb as f32 / total_ram_mb as f32) * 100.0
+        // `sysinfo` changed these accessors from kilobytes to BYTES in 0.29
+        // (this crate is pinned to 0.31). Dividing a byte count by 1024 once
+        // labelled it "MB" but was actually reporting TB, so a 32 GB machine
+        // showed ~33 554 432 MB of RAM and the frontend percentages were noise.
+        // Divide by 1024 * 1024 to get real megabytes.
+        const BYTES_PER_MB: u64 = 1024 * 1024;
+        let total_ram_bytes = sys.total_memory();
+        let used_ram_bytes = sys.used_memory();
+        let total_ram_mb = total_ram_bytes / BYTES_PER_MB;
+        let used_ram_mb = used_ram_bytes / BYTES_PER_MB;
+        let ram_pct = if total_ram_bytes > 0 {
+            (used_ram_bytes as f64 / total_ram_bytes as f64) * 100.0
         } else {
             0.0
-        };
+        } as f32;
 
         let cpu_pct = sys.global_cpu_usage();
 

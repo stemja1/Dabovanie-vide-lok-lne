@@ -66,10 +66,39 @@ export const DubbedVideoPlayer: React.FC<DubbedVideoPlayerProps> = ({
     };
   }, [inputVideoPath, outputVideoPath]);
 
+  // The real subtitle for the current playback position, loaded from the metadata
+// the pipeline actually produced. This used to be a hardcoded demo pair rendered
+// over the user's video at all times, regardless of what was being said.
+const [cues, setCues] = useState<
+    Array<{ start_time: number; end_time: number; slovak_text: string; chinese_text: string }>
+  >([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCues = async () => {
+      try {
+        const payload = await invokeCommand<{
+          document: { utterances: typeof cues };
+        }>('get_review_utterance_metadata');
+        if (!cancelled && payload?.document?.utterances) {
+          setCues(payload.document.utterances);
+        }
+      } catch {
+        // No metadata available - leave the overlay empty instead of inventing text.
+      }
+    };
+    loadCues();
+    return () => {
+      cancelled = true;
+    };
+  }, [outputVideoPath]);
+
+  const activeCue = cues.find((c) => currentTime >= c.start_time && currentTime <= c.end_time);
   const currentSubtitle = {
-    sk: 'Dobrý deň, vítam vás pri prezentácii nášho nového produktu.',
-    zh: '您好，欢迎来到我们新产品的展示会。',
+    sk: activeCue?.slovak_text ?? '',
+    zh: activeCue?.chinese_text ?? '',
   };
+  const hasSubtitle = Boolean(currentSubtitle.zh || currentSubtitle.sk);
 
   const activeVideoSrc = outputSrc || inputSrc;
   const inputFilename = inputVideoPath ? inputVideoPath.split(/[/\\]/).pop() : 'vstupne_video.mp4';
@@ -231,13 +260,13 @@ export const DubbedVideoPlayer: React.FC<DubbedVideoPlayerProps> = ({
                 </div>
                 <h4 className="font-semibold text-sm text-slate-200">{outputFilename}</h4>
                 <p className="text-xs text-slate-400 mt-1">
-                  Rozlíšenie: 1080p • 25 FPS • Piper TTS (zh_CN-huayan)
+                  Výstupný video súbor • titulky načítané z metadát behu
                 </p>
               </div>
             )}
 
             {/* Subtitles Overlay */}
-            {subtitlesMode !== 'none' && (
+            {subtitlesMode !== 'none' && hasSubtitle && (
               <div className="absolute bottom-6 left-0 right-0 px-6 text-center z-10 pointer-events-none">
                 <div className="inline-block bg-black/85 backdrop-blur-md px-4 py-2 rounded-xl border border-white/10 text-center shadow-lg space-y-0.5">
                   {(subtitlesMode === 'both' || subtitlesMode === 'zh') && (

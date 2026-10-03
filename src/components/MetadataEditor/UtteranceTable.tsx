@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Save,
   Plus,
@@ -41,7 +41,6 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
 }) => {
   const [doc, setDoc] = useState<UtteranceMetadataDocument | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedNotification, setCopiedNotification] = useState<string | null>(null);
@@ -53,6 +52,31 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
    */
   const [savePath, setSavePath] = useState<string | null>(null);
   const [isRealRun, setIsRealRun] = useState<boolean>(false);
+  // Mirrors `doc` outside React state so a `beforeunload` guard can read it
+  // without re-subscribing (and re-registering the listener) on every keystroke.
+  const unsavedRef = useRef(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const markDirty = useCallback(() => {
+    unsavedRef.current = true;
+    setHasUnsavedChanges(true);
+  }, []);
+  const markClean = useCallback(() => {
+    unsavedRef.current = false;
+    setHasUnsavedChanges(false);
+  }, []);
+
+  // `App.tsx` renders this editor conditionally, so switching tabs unmounts it and
+  // the document - including unsaved Chinese translations - was discarded on the
+  // next mount with no prompt. Warn before losing work.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!unsavedRef.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
 
   const loadData = useCallback(async () => {
     setErrorMessage(null);
@@ -61,7 +85,7 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
       setDoc(payload.document);
       setSavePath(payload.file_path ?? null);
       setIsRealRun(payload.is_real_run);
-      setHasUnsavedChanges(false);
+      markClean();
     } catch (err) {
       console.error('Failed to load utterance metadata', err);
       setErrorMessage(
@@ -98,21 +122,36 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
   const handleUpdateUtterance = (updated: UtteranceItem) => {
     if (!doc) return;
     setDoc({ ...doc, ...withRecalculatedTiming(doc.utterances.map((u) => (u.id === updated.id ? updated : u))) });
-    setHasUnsavedChanges(true);
+    markDirty();
   };
 
   const handleDeleteUtterance = (id: string) => {
     if (!doc) return;
     setDoc({ ...doc, ...withRecalculatedTiming(doc.utterances.filter((u) => u.id !== id)) });
-    setHasUnsavedChanges(true);
+    markDirty();
   };
 
   const handleAddUtterance = () => {
     if (!doc) return;
-    const lastUtt = doc.utterances[doc.utterances.length - 1];
-    const newStart = lastUtt ? Number((lastUtt.end_time + 0.5).toFixed(2)) : 0.0;
+    // Anchor on the furthest END time, not on the last array element. After a
+    // delete the array length no longer matches the numbering, and overlapping
+    // cues were inserted inside an existing utterance.
+    const maxEnd = doc.utterances.reduce((acc, u) => Math.max(acc, u.end_time || 0), 0);
+    const newStart = Number((maxEnd + 0.5).toFixed(2));
     const newEnd = Number((newStart + 3.0).toFixed(2));
-    const newId = `utt_${(doc.utterances.length + 1).toString().padStart(3, '0')}`;
+
+    // `length + 1` collided with an existing id after any deletion (e.g. delete
+    // utt_001 from a 3-item list -> new id utt_003). The backend rejects duplicate
+    // ids outright, so from that point on EVERY save failed with
+    // "Duplicitný identifikátor repliky". Derive the next free number instead.
+    const usedNumbers = new Set<number>();
+    doc.utterances.forEach((u) => {
+      const m = /^utt_(\d+)$/.exec(u.id);
+      if (m) usedNumbers.add(Number(m[1]));
+    });
+    let nextNum = doc.utterances.length + 1;
+    while (usedNumbers.has(nextNum)) nextNum += 1;
+    const newId = `utt_${nextNum.toString().padStart(3, '0')}`;
 
     const newUtt: UtteranceItem = {
       id: newId,
@@ -130,7 +169,7 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
     };
 
     setDoc({ ...doc, ...withRecalculatedTiming([...doc.utterances, newUtt]) });
-    setHasUnsavedChanges(true);
+    markDirty();
   };
 
   const handleSaveChanges = async (): Promise<boolean> => {
@@ -147,6 +186,18 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
       return false;
     }
 
+    // `is_real_run === false` means the backend had no real document and returned
+    // 3 hardcoded demo sentences. Saving those over the pipeline's metadata file
+    // made the fake data indistinguishable from real ASR output afterwards.
+    if (!isRealRun) {
+      setErrorMessage(
+        'Tieto metadáta sú ukážkové (nie sú výstupom rozpoznania reči). ' +
+          'Spustite najprv fázy 1–3 (Demux, ASR, Preklad), aby sa vytvoril ' +
+          'skutočný preklad na úpravu.'
+      );
+      return false;
+    }
+
     setIsSaving(true);
     setErrorMessage(null);
     try {
@@ -154,7 +205,7 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
         file_path: savePath,
         document: { ...doc, is_verified_by_user: true },
       });
-      setHasUnsavedChanges(false);
+      markClean();
       setCopiedNotification('Metadáta uložené do pipeline súboru.');
       setTimeout(() => setCopiedNotification(null), 3000);
       return true;

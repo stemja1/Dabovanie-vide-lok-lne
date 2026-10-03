@@ -253,6 +253,15 @@ impl WslExecutor {
                     tokio::time::sleep(poll_interval).await;
                 }
                 Err(e) => {
+                    // Same teardown as the cancel and timeout branches: without
+                    // it, `tokio::process::Command` does NOT kill on drop, so the
+                    // `wsl.exe` client and the Python pipeline it started kept
+                    // running detached, and the two reader tasks kept pumping
+                    // log lines for the rest of the app's life.
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    stdout_task.abort();
+                    stderr_task.abort();
                     return Err(anyhow::anyhow!("Chyba pri čakaní na proces: {}", e));
                 }
             }
@@ -380,9 +389,14 @@ impl WslExecutor {
     /// Extracts numerical percentage from progress bars (e.g. `[PROGRESS:45.5%]` or `45%|...`)
     pub fn parse_progress_line(line: &str) -> Option<f32> {
         if let Some(pos) = line.find("[PROGRESS:") {
-            let slice = &line[pos + 10..];
-            if let Some(end) = slice.find('%') {
-                if let Ok(val) = slice[..end].trim().parse::<f32>() {
+            // `pos + 10` is only a char boundary when the byte right after the
+            // marker is ASCII. A log line such as `[PROGRESS:数据]` would panic on
+            // the slice, and because `panic = "abort"` is set in Cargo.toml that
+            // kills the whole app instead of just skipping the line.
+            let rest = line.get(pos + 10..)?;
+            if let Some(end) = rest.find('%') {
+                let number = rest.get(..end)?;
+                if let Ok(val) = number.trim().parse::<f32>() {
                     return Some(val.clamp(0.0, 100.0));
                 }
             }
@@ -411,7 +425,16 @@ impl WslExecutor {
             );
         }
 
-        if lower.contains("killed") || lower.contains("oom-killer") {
+        // Match the kernel OOM signature, not the bare word "killed". A log line
+        // mentioning a file or user named "killed", or any `device kernel killed`
+        // message, used to be reported to the user as "RAM exhausted" and
+        // triggered the MuseTalk fallback for a completely unrelated reason.
+        let oom_killed = lower.contains("oom-killer")
+            || lower.contains("out of memory: kill")
+            || lower.contains("killed process")
+            || (lower.contains("memory cgroup out of memory")
+                && lower.contains("kill"));
+        if oom_killed {
             return (
                 Some(ProcessErrorKind::OutOfMemorySystem),
                 Some("Systémová RAM bola vyčerpaná a proces bol ukončený OS. Uistite sa, že nemáte na pozadí spustené iné náročné aplikácie.".to_string()),

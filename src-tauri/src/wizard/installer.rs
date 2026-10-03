@@ -104,18 +104,63 @@ impl WizardInstaller {
             ]);
             let res = cmd.output().await;
 
-            if let Some(ref tx) = log_tx {
-                let _ = tx.send(ProcessLogLine {
-                    stream: "system".to_string(),
-                    message: "Inštalačný proces WSL dokončený.".to_string(),
-                    timestamp_ms: chrono::Utc::now().timestamp_millis(),
-                    is_progress: false,
-                    progress_percent: Some(100.0),
-                    step_tag: Some("wsl_install".to_string()),
-                });
+            // Report what actually happened. The success line used to be
+            // emitted before the result was even inspected, so a failed or
+            // cancelled UAC-elevated install still showed "dokončený / 100%".
+            match res {
+                Ok(o) if o.status.success() => {
+                    if let Some(ref tx) = log_tx {
+                        let _ = tx.send(ProcessLogLine {
+                            stream: "system".to_string(),
+                            message: "Inštalačný proces WSL dokončený.".to_string(),
+                            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                            is_progress: false,
+                            progress_percent: Some(100.0),
+                            step_tag: Some("wsl_install".to_string()),
+                        });
+                    }
+                    Ok(true)
+                }
+                Ok(o) => {
+                    let detail = String::from_utf8_lossy(&o.stderr)
+                        .trim()
+                        .chars()
+                        .take(400)
+                        .collect::<String>();
+                    if let Some(ref tx) = log_tx {
+                        let _ = tx.send(ProcessLogLine {
+                            stream: "system".to_string(),
+                            message: format!(
+                                "Inštalácia WSL zlyhala (exit {}).{}{}",
+                                o.status.code().unwrap_or(-1),
+                                if detail.is_empty() { "" } else { ": " },
+                                detail
+                            ),
+                            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                            is_progress: false,
+                            progress_percent: None,
+                            step_tag: Some("error".to_string()),
+                        });
+                    }
+                    Ok(false)
+                }
+                Err(e) => {
+                    if let Some(ref tx) = log_tx {
+                        let _ = tx.send(ProcessLogLine {
+                            stream: "system".to_string(),
+                            message: format!(
+                                "Inštaláciu WSL sa nepodarilo spustiť: {}",
+                                e
+                            ),
+                            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                            is_progress: false,
+                            progress_percent: None,
+                            step_tag: Some("error".to_string()),
+                        });
+                    }
+                    Ok(false)
+                }
             }
-
-            Ok(res.map(|o| o.status.success()).unwrap_or(false))
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -159,6 +204,10 @@ impl WizardInstaller {
         }
 
         let cmd = r#"
+# `set -e` matters: without it bash returns the exit code of the LAST command
+# only. These scripts used to end with an `echo`, so a failed `apt-get install`
+# still reported the step as successful and the wizard moved on.
+set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
@@ -173,7 +222,8 @@ apt-get install -y --no-install-recommends \
     build-essential \
     libsndfile1 \
     libgl1 \
-    libglib2.0-0
+    libglib2.0-0t64 \
+    libgomp1
 echo ">>> Systémové balíky úspešne nainštalované."
 "#;
         let res = WslExecutor::run_streaming_command_as_root(
@@ -204,6 +254,7 @@ echo ">>> Systémové balíky úspešne nainštalované."
 
         let cmd = format!(
             r#"
+set -e
 export PYTHONUNBUFFERED=1
 {0}
 {1}
@@ -225,10 +276,19 @@ echo ">>> Aktualizujem pip, setuptools, wheel..."
 pip install --upgrade pip setuptools wheel
 
 echo ">>> Inštalujem PyTorch s podporou AMD ROCm (whl/rocm6.2)..."
-pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
+if pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2; then
+    echo ">>> ROCm PyTorch nainštalovaný."
+else
+    echo ">>> ROCm PyTorch sa nepodarilo nainštalovať, skúšam CPU build..."
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+fi
 
-echo ">>> Inštalujem dabingové knižnice (transformers, accelerate, piper-tts, kokoro-onnx, soundfile, requests, huggingface_hub)..."
-pip install transformers accelerate sentencepiece sacremoses piper-tts kokoro-onnx soundfile librosa scipy pydub ffmpeg-python tqdm requests huggingface_hub
+echo ">>> Inštalujem dabingové knižnice..."
+# faster-whisper: the ASR engine is selectable in Settings, but the package was
+# never installed, so choosing it always died with ModuleNotFoundError.
+# opencv-python-headless + python_speech_features + moviepy/imageio: needed by
+# the MuseTalk / LatentSync stacks.
+pip install transformers accelerate sentencepiece sacremoses faster-whisper piper-tts kokoro-onnx soundfile librosa scipy pydub ffmpeg-python tqdm requests huggingface_hub opencv-python-headless python_speech_features moviepy imageio
 pip install "open_dubbing[coqui]" --no-deps || true
 
 echo ">>> Python & ROCm prostredie je úspešne nakonfigurované."
@@ -265,6 +325,7 @@ echo ">>> (Python skripty sa synchronizujú z aplikačných resources pri štart
 
         let cmd = format!(
             r#"
+set -e
 export PYTHONUNBUFFERED=1
 {0}
 {1}
@@ -286,8 +347,22 @@ if [ ! -d "$WORKSPACE/$LATENTSYNC_DIR" ]; then
     echo ">>> Klonujem repozitár LatentSync (v1.5)..."
     git clone --depth 1 https://github.com/bytedance/LatentSync.git "$WORKSPACE/$LATENTSYNC_DIR"
     cd "$WORKSPACE/$LATENTSYNC_DIR"
-    pip install -r requirements.txt || true
+    # LatentSync's requirements.txt pins `torch==2.5.1` and adds a CUDA
+    # `--extra-index-url`, which REPLACES the ROCm build installed above and
+    # leaves `torch.cuda.is_available()` false on AMD. Install only the packages
+    # that torch itself does not already provide.
+    echo ">>> Inštalujem LatentSync závislosti bez prepísania PyTorch..."
+    pip install -r requirements.txt --no-deps || true
     pip install diffusers omegaconf einops face-alignment
+    # Upstream `scripts/inference.py` loads the audio encoder from
+    # `checkpoints/whisper/tiny.pt`, which is not part of the git repo. Without
+    # it the default engine dies inside `torch.load` with a bare
+    # FileNotFoundError that points nowhere useful.
+    echo ">>> Sťahujem LatentSync audio encoder (whisper/tiny.pt)..."
+    mkdir -p checkpoints/whisper
+    curl -fL --retry 3 -o checkpoints/whisper/tiny.pt \
+        https://huggingface.co/ByteDance/LatentSync/resolve/main/whisper/tiny.pt \
+        || echo ">>> UPOZORNENIE: whisper/tiny.pt sa nepodarilo stiahnuť, lip-sync v LatentSync nebude fungovať."
 fi
 
 # 2. MuseTalk (Ultra-lightweight fallback engine for ROCm)
@@ -296,7 +371,11 @@ if [ ! -d "$WORKSPACE/$MUSETALK_DIR" ]; then
     echo ">>> Klonujem repozitár MuseTalk..."
     git clone --depth 1 https://github.com/TMElyralab/MuseTalk.git "$WORKSPACE/$MUSETALK_DIR"
     cd "$WORKSPACE/$MUSETALK_DIR"
-    pip install -r requirements.txt || true
+    # MuseTalk pins numpy==1.23.5 and tensorflow==2.12.0, neither of which has a
+    # cp312 wheel, so the install fails outright on Ubuntu 24.04. Keep
+    # --no-deps and add only what the pipeline actually imports.
+    pip install -r requirements.txt --no-deps || true
+    pip install librosa opencv-python-headless tqdm huggingface_hub omegaconf
 fi
 echo ">>> AI Repozitáre pre lip-sync sú úspešne pripravené."
 "#,
@@ -354,11 +433,16 @@ if [ ! -f "$PY" ]; then
     PY="python3"
 fi
 
+export AIDUBBING_MODEL_ID={2}
+
 "$PY" -c "
 import os, sys, requests, shutil, hashlib
 
 sys.stdout.reconfigure(line_buffering=True)
-model_id = '{2}'
+# The model id arrives via the environment (single-quoted by the shell), never
+# spliced into this source. Interpolating it here directly meant a step id like
+# `model_x'; import os; os.system('...'); #` executed arbitrary code in WSL.
+model_id = os.environ['AIDUBBING_MODEL_ID']
 workspace = os.path.expanduser(os.environ['WORKSPACE'])
 target_dir = os.path.join(workspace, 'models')
 os.makedirs(target_dir, exist_ok=True)
@@ -542,34 +626,47 @@ elif model_id == 'musetalk-weights':
     # Stage 5 passes --unet_model_path/--unet_config/--whisper_dir explicitly, so
     # the files must exist at predictable paths instead of the repository's own
     # relative defaults. Download into the workspace, then normalise the layout.
+    #
+    # The patterns must match the repo layout exactly: TMElyralab/MuseTalk stores
+    # these at `musetalk/...` and `musetalkV15/...` with NO `models/` prefix, and
+    # ships no whisper weights. The previous patterns prefixed everything with
+    # `models/`, matched zero files, and the step failed unconditionally.
     snapshot_download(
         repo_id='TMElyralab/MuseTalk',
         local_dir=mt_dir,
         allow_patterns=[
-            'models/musetalkV15/unet.pth',
-            'models/musetalkV15/musetalk.json',
-            'models/whisper/*',
+            'musetalkV15/unet.pth',
+            'musetalkV15/musetalk.json',
+            'musetalk/*.json',
+            'musetalk/*.bin',
         ],
         max_workers=4,
     )
 
     # MuseTalk v1.5 ships the UNet config as `musetalk.json`; the CLI's
     # `--unet_config` flag expects a path we control.
-    cfg_src = os.path.join(mt_dir, 'models/musetalkV15/musetalk.json')
+    cfg_src = os.path.join(mt_dir, 'musetalkV15/musetalk.json')
     cfg_dst = os.path.join(mt_dir, 'config.json')
     if not os.path.exists(cfg_dst) and os.path.exists(cfg_src):
         shutil.copy2(cfg_src, cfg_dst)
         print('✓ MuseTalk UNet konfigurácia sprístupnená ako config.json.', flush=True)
 
-    w_src = os.path.join(mt_dir, 'models/musetalkV15/unet.pth')
+    w_src = os.path.join(mt_dir, 'musetalkV15/unet.pth')
     w_dst = os.path.join(mt_dir, 'unet.pth')
     if not os.path.exists(w_dst) and os.path.exists(w_src):
         shutil.copy2(w_src, w_dst)
+    elif not os.path.exists(w_dst):
+        # Accept the v1 layout too, in case the snapshot resolves differently.
+        alt = os.path.join(mt_dir, 'musetalk/unet.pth')
+        if os.path.exists(alt):
+            shutil.copy2(alt, w_dst)
 
+    # The MuseTalk repo does not ship whisper weights, so point the flag at the
+    # directory the repo clone already created rather than requiring a copy that
+    # can never arrive.
     whisper_dst = os.path.join(mt_dir, 'whisper')
-    whisper_src = os.path.join(mt_dir, 'models/whisper')
-    if not os.path.exists(whisper_dst) and os.path.isdir(whisper_src):
-        shutil.copytree(whisper_src, whisper_dst)
+    if not os.path.exists(whisper_dst):
+        os.makedirs(whisper_dst, exist_ok=True)
 
     if not os.path.exists(w_dst):
         # Doubled braces are required here: this block lives inside a Rust
@@ -580,10 +677,17 @@ elif model_id == 'musetalk-weights':
         )
     print('✓ MuseTalk váhy sú pripravené.', flush=True)
 
+else:
+    # The if/elif chain used to fall through silently, so an unknown model id
+    # printed "HOTOVO" and exited 0 and the wizard showed a green check.
+    print(f'Neznámy model id: {{model_id}}', file=sys.stderr)
+    sys.exit(1)
+
 print('HOTOVO', flush=True)
 "
 "#,
-            venv_setup, ws_setup, model_id
+            venv_setup, ws_setup,
+            PathMapper::escape_bash_arg(model_id)
         );
 
         let res = WslExecutor::run_streaming_command(

@@ -69,14 +69,18 @@ export interface LiveSystemMetrics {
   timestamp_ms: number;
 }
 
+// Field names must match `RocmStatusInfo` in `src-tauri/src/wsl/bridge.rs`
+// (serde serialises Rust field names verbatim). They previously did not, so every
+// read was `undefined` -> falsy and the header always claimed "CPU Fallback"
+// even on a fully working ROCm machine. The mock in tauriBridge.ts used the
+// frontend's names, which is why the browser preview looked correct.
 export interface RocmStatusInfo {
-  rocm_available: boolean;
+  is_rocm_available: boolean;
   rocm_version: string | null;
-  gpu_name: string | null;
-  total_vram_mb: number;
-  free_vram_mb: number;
-  hip: boolean;
-  error: string | null;
+  gpu_device_name: string | null;
+  total_vram_mb: number | null;
+  free_vram_mb: number | null;
+  is_hip_available: boolean;
 }
 
 export interface ProcessLogLine {

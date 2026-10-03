@@ -40,14 +40,14 @@ export const App: React.FC = () => {
         setRocmStatus(r);
       } catch (err) {
         setRocmStatus({
-          rocm_available: false,
+          is_rocm_available: false,
           rocm_version: null,
-          gpu_name: null,
-          total_vram_mb: 0,
-          free_vram_mb: 0,
-          hip: false,
-          error: String(err),
+          gpu_device_name: null,
+          total_vram_mb: null,
+          free_vram_mb: null,
+          is_hip_available: false,
         });
+        console.error('ROCm status check failed', err);
       }
     };
 

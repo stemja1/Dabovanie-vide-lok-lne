@@ -58,14 +58,18 @@ pip install "open_dubbing[coqui]" --no-deps 2>/dev/null || true
 
 echo -e "\n${YELLOW}[5/6] Klonovanie a príprava Lip-sync repozitárov (LatentSync 1.5 & MuseTalk)...${NC}"
 cd "${WORKSPACE}"
-if [ ! -d "${WORKSPACE}/latentsync" ]; then
+# NOTE: capitalisation matters. stage_5_lipsync.py looks for `LatentSync/` and
+# `MuseTalk/`, and the WSL filesystem is case-sensitive, so cloning into
+# `latentsync`/`musetalk` produced the very "module not found" failure this
+# script was supposed to prevent.
+if [ ! -d "${WORKSPACE}/LatentSync" ]; then
     echo "Klonujem LatentSync (v1.5)..."
-    git clone https://github.com/bytedance/LatentSync.git "${WORKSPACE}/latentsync" || true
+    git clone https://github.com/bytedance/LatentSync.git "${WORKSPACE}/LatentSync"
 fi
 
-if [ ! -d "${WORKSPACE}/musetalk" ]; then
+if [ ! -d "${WORKSPACE}/MuseTalk" ]; then
     echo "Klonujem MuseTalk (odľahčený fallback model)..."
-    git clone https://github.com/TMElyralab/MuseTalk.git "${WORKSPACE}/musetalk" || true
+    git clone https://github.com/TMElyralab/MuseTalk.git "${WORKSPACE}/MuseTalk"
 fi
 echo -e "${GREEN}✓ Lip-sync repozitáre pripravené.${NC}"
 

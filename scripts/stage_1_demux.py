@@ -20,6 +20,27 @@ def run_demux(input_video: str, workspace: str):
     wav_24k = os.path.join(audio_dir, "extracted_audio_24k.wav")
     video_no_audio = os.path.join(workspace, "video_no_audio.mp4")
 
+    # Refuse up front with an actionable message. Without this, a source that has
+    # no audio stream (or only an unsupported one) produced two raw ffmpeg
+    # failures - the second one being the confusing
+    # "Output file does not contain any stream" for the 16 kHz extraction, which
+    # says nothing about the actual cause.
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "a",
+            "-show_entries", "stream=index", "-of", "csv=p=0",
+            input_video,
+        ],
+        capture_output=True,
+    )
+    audio_streams = [ln for ln in probe.stdout.decode("utf-8", "replace").split() if ln.strip()]
+    if not audio_streams:
+        raise RuntimeError(
+            f"Vstupné video neobsahuje žiadnu audio stopu: '{input_video}'. "
+            "Dabing potrebuje reč v origináli - vyberte video, kde je hlas, "
+            "alebo najprv vložte zvuk do stopy."
+        )
+
     print("[PROGRESS:10.0%]")
     print(f"[FFmpeg] Extrahujem 16kHz mono audio pre Whisper ASR -> {wav_16k}")
     cmd_16k = [

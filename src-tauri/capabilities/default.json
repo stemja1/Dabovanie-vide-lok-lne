@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Povolenia pre hlavny webview. Bez tohto suboru ma webview v Tauri 2 ziadny pristup k IPC vrstve: `listen()` je odmietnuty, takze aplikacia nereagovala na ziadne udalosti (progress, logy, stav pipeline) a ticho používala mock data.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit",
+    "core:window:allow-start-dragging",
+    "core:webview:allow-internal-toggle-devtools"
+  ]
+}

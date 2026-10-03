@@ -18,21 +18,31 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onOpenWizard,
 }) => {
-  const vramPercent = metrics ? metrics.gpu_vram_percent : (rocmStatus?.rocm_available ? 33.5 : 0);
-  const vramUsedGb = metrics ? (metrics.gpu_vram_used_mb / 1024).toFixed(1) : (rocmStatus?.rocm_available ? '4.1' : '0.0');
-  const vramTotalGb = rocmStatus && rocmStatus.total_vram_mb > 0
-    ? (rocmStatus.total_vram_mb / 1024).toFixed(0)
-    : metrics
-    ? (metrics.gpu_vram_total_mb / 1024).toFixed(0)
-    : '12';
+  // No invented numbers. The old code fell back to hardcoded values (33.5 % VRAM,
+// 4.1 GB used, 12 GB total, 51.4 % / 8.4 GB / 16 GB RAM, "RX 7700 XT VRAM",
+// "ROCm 6.4.2") whenever `metrics` was null, which is exactly what happens when
+// the command fails - so the header showed fabricated telemetry with a live bar.
+const isRocmActive = rocmStatus?.is_rocm_available ?? metrics?.is_rocm_ready ?? false;
 
-  const ramPercent = metrics ? metrics.host_ram_percent : 51.4;
-  const ramUsedGb = metrics ? (metrics.host_ram_used_mb / 1024).toFixed(1) : '8.4';
-  const ramTotalGb = metrics ? (metrics.host_ram_total_mb / 1024).toFixed(0) : '16';
+const ramPercent = metrics ? metrics.host_ram_percent : 0;
+const ramUsedGb = metrics ? (metrics.host_ram_used_mb / 1024).toFixed(1) : '—';
+const ramTotalGb = metrics ? (metrics.host_ram_total_mb / 1024).toFixed(0) : '—';
 
-  const isRocmActive = rocmStatus ? rocmStatus.rocm_available : (metrics?.is_rocm_ready ?? true);
-  const gpuLabel = rocmStatus?.gpu_name || metrics?.gpu_name || 'RX 7700 XT VRAM';
-  const rocmVersionLabel = rocmStatus?.rocm_version || 'ROCm 6.4.2';
+// Prefer the real VRAM figures from the ROCm probe (it runs
+// torch.cuda.mem_get_info() in WSL); fall back to the host poll, which honestly
+// reports 0/"unknown" rather than guessing.
+const measuredVramTotalMb = rocmStatus?.total_vram_mb ?? metrics?.gpu_vram_total_mb ?? 0;
+const measuredVramUsedMb =
+  rocmStatus?.free_vram_mb != null && measuredVramTotalMb > 0
+    ? Math.max(0, measuredVramTotalMb - rocmStatus.free_vram_mb)
+    : metrics?.gpu_vram_used_mb ?? 0;
+const vramPercent =
+  measuredVramTotalMb > 0 ? (measuredVramUsedMb / measuredVramTotalMb) * 100 : 0;
+const vramUsedGb = measuredVramTotalMb > 0 ? (measuredVramUsedMb / 1024).toFixed(1) : '—';
+const vramTotalGb = measuredVramTotalMb > 0 ? (measuredVramTotalMb / 1024).toFixed(0) : '—';
+
+const gpuLabel = rocmStatus?.gpu_device_name || metrics?.gpu_name || 'GPU nezistene';
+const rocmVersionLabel = rocmStatus?.rocm_version || 'ROCm nezistena';
 
   return (
     <header className="h-16 border-b border-slate-800/80 bg-slate-900/90 backdrop-blur-md px-6 flex items-center justify-between z-30 select-none">
@@ -117,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
           ) : (
             <>
               <AlertTriangle className="w-4 h-4 text-amber-400" />
-              <span className="font-medium text-[11px] text-amber-300" title={rocmStatus?.error || 'ROCm GPU nie je detegovaná'}>
+              <span className="font-medium text-[11px] text-amber-300" title="ROCm GPU nie je detegovaná">
                 CPU / Fallback Mód
               </span>
             </>
