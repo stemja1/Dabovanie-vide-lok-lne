@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Pause, Trash2, Edit2, Check, Sparkles, Volume2 } from 'lucide-react';
+import { Play, Pause, Trash2 } from 'lucide-react';
 import { UtteranceItem } from '../../types/metadata';
-import { formatTimeSeconds } from '../../utils/formatters';
+
 import { Badge } from '../ui/Badge';
 
 interface UtteranceRowProps {
@@ -21,7 +21,6 @@ export const UtteranceRow: React.FC<UtteranceRowProps> = ({
   isPlaying,
   onTogglePlay,
 }) => {
-  const [isEditingZh, setIsEditingZh] = useState<boolean>(false);
   const [zhText, setZhText] = useState<string>(item.chinese_text);
 
   // `chinese_text` sa external mení (napr. "Skúsiť znova" načíta dokument znova),
@@ -33,7 +32,6 @@ export const UtteranceRow: React.FC<UtteranceRowProps> = ({
   }, [item.chinese_text]);
 
   const handleSaveZh = () => {
-    setIsEditingZh(false);
     if (zhText !== item.chinese_text) {
       onUpdate({
         ...item,

@@ -1,14 +1,12 @@
-﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Save,
   Plus,
-  Play,
   RotateCcw,
   Volume2,
   ArrowRight,
   AlertCircle,
   Search,
-  Copy,
   Check,
   FileText,
 } from 'lucide-react';

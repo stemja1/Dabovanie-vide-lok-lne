@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, ShieldCheck, AlertTriangle, HardDrive, Info } from 'lucide-react';
+import { Cpu, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { FullPipelineResourceBudget } from '../../types/pipeline';
 import { formatBytes } from '../../utils/formatters';
 import { Card } from '../ui/Card';

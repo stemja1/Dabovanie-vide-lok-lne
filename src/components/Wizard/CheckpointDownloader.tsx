@@ -8,8 +8,6 @@ import {
   HardDrive,
   RefreshCw,
   Folder,
-  Layers,
-  Sparkles,
 } from 'lucide-react';
 import { ModelManifestItem } from '../../types/wizard';
 import { formatBytes } from '../../utils/formatters';
@@ -50,9 +48,15 @@ export const CheckpointDownloader: React.FC<CheckpointDownloaderProps> = ({
     return m.category === filterCategory;
   });
 
+  // Veľkosť sťahovania sa počítala, ale nikdy sa nezobrazila. Používateľ
+  // teda spúšťal jedným klikom stiahnutie ~14 GB bez toho, aby vedel, koľko
+  // to je ani či má dosť miesta. Zobrazujeme celkovú aj zostávajúcu veľkosť.
   const totalSizeMb = models.reduce((acc, m) => acc + m.approximate_size_mb, 0);
   const installedCount = models.filter((m) => isModelInstalled(m.id)).length;
   const missingCount = models.length - installedCount;
+  const missingSizeMb = models
+    .filter((m) => !isModelInstalled(m.id))
+    .reduce((acc, m) => acc + m.approximate_size_mb, 0);
 
   return (
     <div className="space-y-6">
@@ -78,6 +82,20 @@ export const CheckpointDownloader: React.FC<CheckpointDownloaderProps> = ({
               <span className="text-slate-600">/</span>
               <span className="text-rose-400 font-bold">{missingCount}</span>
               <span className="text-slate-400">chýba</span>
+            </div>
+            <div className="flex items-center gap-2 bg-slate-950 px-3.5 py-1.5 rounded-xl border border-slate-800 text-xs">
+              <HardDrive className="w-3.5 h-3.5 text-slate-500" />
+              <span className="text-slate-400">celkom</span>
+              <span className="text-slate-200 font-bold">{formatBytes(totalSizeMb * 1024 * 1024)}</span>
+              {missingCount > 0 && (
+                <>
+                  <span className="text-slate-600">/</span>
+                  <span className="text-slate-400">chýba ešte</span>
+                  <span className="text-amber-300 font-bold">
+                    {formatBytes(missingSizeMb * 1024 * 1024)}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>

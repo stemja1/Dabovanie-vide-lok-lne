@@ -4,15 +4,11 @@ import {
   Pause,
   Volume2,
   VolumeX,
-  Maximize,
   Download,
   FolderOpen,
   Film,
   Sparkles,
-  Subtitles,
   Columns,
-  Square,
-  RotateCcw,
 } from 'lucide-react';
 import { invokeCommand, convertVideoPathToUrl } from '../../utils/tauriBridge';
 import { Button } from '../ui/Button';

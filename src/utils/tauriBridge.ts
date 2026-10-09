@@ -1,7 +1,7 @@
 import { AppConfig } from '../types/config';
-import { PipelineExecutionState, FullPipelineResourceBudget, LiveSystemMetrics, ProcessLogLine } from '../types/pipeline';
+import { PipelineExecutionState, FullPipelineResourceBudget, LiveSystemMetrics } from '../types/pipeline';
 import { SystemDiagnosticsReport, ModelManifestItem } from '../types/wizard';
-import { UtteranceMetadataDocument, UtteranceItem } from '../types/metadata';
+import { UtteranceMetadataDocument } from '../types/metadata';
 
 declare global {
   interface Window {

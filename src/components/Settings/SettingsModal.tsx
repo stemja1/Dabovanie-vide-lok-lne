@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Settings,
   Save,
   RotateCcw,
   ShieldCheck,
@@ -10,7 +9,7 @@ import {
   Check,
   Cpu,
 } from 'lucide-react';
-import { AppConfig, TtsEngine, LipsyncEngine, AsrEngine, AsrDevice } from '../../types/config';
+import { AppConfig, AsrEngine, AsrDevice } from '../../types/config';
 import { invokeCommand } from '../../utils/tauriBridge';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';

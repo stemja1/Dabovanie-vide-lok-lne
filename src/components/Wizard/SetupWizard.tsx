@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   Wrench,
   CheckCircle2,
-  XCircle,
   Play,
   Square,
   RefreshCw,
@@ -14,7 +13,6 @@ import {
   Check,
   RotateCcw,
   Sparkles,
-  ArrowRight,
 } from 'lucide-react';
 import { SystemDiagnosticsReport, ModelManifestItem } from '../../types/wizard';
 import { ProcessLogLine } from '../../types/pipeline';

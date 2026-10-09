@@ -161,7 +161,11 @@ impl WslExecutor {
         // out of the single-quoted assignment.
         let bash_with_cancel = match &cancel_flag {
             Some(flag) => {
-                let flag_value = if flag.load(Ordering::SeqCst) { "1" } else { "0" };
+                let flag_value = if flag.load(Ordering::SeqCst) {
+                    "1"
+                } else {
+                    "0"
+                };
                 format!(
                     "AIDUBBING_CANCELLED={} ; export AIDUBBING_CANCELLED; {}",
                     PathMapper::escape_bash_arg(flag_value),

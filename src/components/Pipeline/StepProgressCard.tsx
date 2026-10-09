@@ -3,11 +3,8 @@ import {
   CheckCircle2,
   Clock,
   AlertTriangle,
-  Play,
   RotateCcw,
-  Sparkles,
   Cpu,
-  Layers,
   Edit,
 } from 'lucide-react';
 import { PipelineStageInfo, StageStatus } from '../../types/pipeline';

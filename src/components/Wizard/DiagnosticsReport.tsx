@@ -1,6 +1,6 @@
 import React from 'react';
-import { CheckCircle2, XCircle, AlertCircle, RefreshCw, Terminal, ArrowRight } from 'lucide-react';
-import { DependencyCheckItem, SystemDiagnosticsReport } from '../../types/wizard';
+import { CheckCircle2, XCircle, AlertCircle, RefreshCw, ArrowRight } from 'lucide-react';
+import { SystemDiagnosticsReport } from '../../types/wizard';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';

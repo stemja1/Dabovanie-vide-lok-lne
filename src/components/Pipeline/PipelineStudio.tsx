@@ -2,17 +2,12 @@ import React, { useState, useEffect } from 'react';
 import {
   Play,
   Square,
-  RotateCcw,
-  Sparkles,
   Layers,
   ArrowRight,
   Clock,
-  ShieldCheck,
   AlertCircle,
-  FileCheck,
 } from 'lucide-react';
 import { PipelineExecutionState, FullPipelineResourceBudget } from '../../types/pipeline';
-import { AppConfig } from '../../types/config';
 import { invokeCommand, addTauriListener } from '../../utils/tauriBridge';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -31,7 +26,9 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
 }) => {
   const [pipelineState, setPipelineState] = useState<PipelineExecutionState | null>(null);
   const [budget, setBudget] = useState<FullPipelineResourceBudget | null>(null);
-  const [config, setConfig] = useState<AppConfig | null>(null);
+  // `config` sa zbytocne tahal pri kazdom `fetchData` (teda pri kazdom polení
+  // stavu raz za sekundu) a nikdy sa nepouzil. Vyhodený - `get_resource_budget`
+  // uz obsahuje vsetko, co obrazovka potrebuje.
   const [isLoading, setIsLoading] = useState<boolean>(false);
   // `start_pipeline_execution` returns Ok(()) immediately and the pre-flight
   // failures (no video, no WSL, script sync failure) are only reported through
@@ -40,14 +37,12 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
 
   const fetchData = async () => {
     try {
-      const [st, bud, cfg] = await Promise.all([
+      const [st, bud] = await Promise.all([
         invokeCommand<PipelineExecutionState>('get_pipeline_state'),
         invokeCommand<FullPipelineResourceBudget>('get_resource_budget'),
-        invokeCommand<AppConfig>('get_config'),
       ]);
       setPipelineState(st);
       setBudget(bud);
-      setConfig(cfg);
     } catch (err) {
       console.error('Failed to load pipeline state', err);
     }
