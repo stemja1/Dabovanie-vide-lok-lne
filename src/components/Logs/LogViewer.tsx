@@ -1,42 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Search, Trash2, Download, Copy, Check, Filter } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Terminal, Search, Trash2, Download, Copy, Check, ArrowDown } from 'lucide-react';
 import { ProcessLogLine } from '../../types/pipeline';
 import { addTauriListener } from '../../utils/tauriBridge';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 
 export const LogViewer: React.FC = () => {
-  const [logs, setLogs] = useState<ProcessLogLine[]>([
-    {
-      stream: 'system',
-      message: 'AI Dabing Štúdio inicializované. WSL2 Ubuntu 24.04 backend pripravený.',
-      timestamp_ms: Date.now() - 30000,
-      is_progress: false,
-      progress_percent: null,
-      step_tag: 'init',
-    },
-    {
-      stream: 'stdout',
-      message: '[ROCm Patcher] AMD Radeon RX 7700 XT detegovaná (12 GB VRAM). Natívny PyTorch SDPA aktivovaný.',
-      timestamp_ms: Date.now() - 25000,
-      is_progress: false,
-      progress_percent: null,
-      step_tag: 'rocm',
-    },
-    {
-      stream: 'stdout',
-      message: '[Piper TTS] Načítaný čínsky model zh_CN-huayan-medium.onnx (MIT Licencia - Komerčne bezpečné).',
-      timestamp_ms: Date.now() - 20000,
-      is_progress: false,
-      progress_percent: null,
-      step_tag: 'tts',
-    },
-  ]);
+  // Žiadne vymyslené riadky. Predtým tu boli tri hardcoded záznamy, ktoré tvrdili
+  // "backend pripravený", "ROCm detegovaná, 12 GB VRAM" a "Piper model načítaný" -
+  // ešte predtým, než čokoľvek zbehlo. V zabalenej aplikácii tak tab Logy
+  // potvrdzoval stav, ktorý nikto neoveril.
+  const [logs, setLogs] = useState<ProcessLogLine[]>([]);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [streamFilter, setStreamFilter] = useState<'all' | 'stdout' | 'stderr' | 'system'>('all');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
+  const [copyFailed, setCopyFailed] = useState<boolean>(false);
+  const [showJumpButton, setShowJumpButton] = useState<boolean>(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -59,21 +40,64 @@ export const LogViewer: React.FC = () => {
     }
   }, [logs, autoScroll]);
 
-  const filteredLogs = logs.filter((l) => {
-    if (streamFilter !== 'all' && l.stream !== streamFilter) return false;
-    if (searchQuery && !l.message.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    return true;
-  });
+  // Automatický posun nikdy nesmie utiecť používateľovi z chyby, ktorú práve
+  // číta. Predtým scroll bežel pri každom novom riadku, takže počas 40-minútového
+  // behu nebolo možné odscrollovať 200 riadkov nahor. Keď používateľ odjede
+  // od konca, posun sa vypne sám a dá mu tlačidlo na návrat.
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceFromBottom < 40;
+    setAutoScroll(atBottom);
+    if (atBottom) setShowJumpButton(false);
+  };
 
-  const handleCopyLogs = () => {
-    const text = filteredLogs.map((l) => `[${new Date(l.timestamp_ms).toISOString()}] [${l.stream.toUpperCase()}] ${l.message}`).join('\n');
-    navigator.clipboard.writeText(text);
-    setCopied(true);
+  const jumpToLatest = () => {
+    setAutoScroll(true);
+    setShowJumpButton(false);
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const filteredLogs = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return logs.filter((l) => {
+      if (streamFilter !== 'all' && l.stream !== streamFilter) return false;
+      if (q && !l.message.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [logs, searchQuery, streamFilter]);
+
+  const handleCopyLogs = async () => {
+    const text = filteredLogs
+      .map(
+        (l) =>
+          `[${new Date(l.timestamp_ms).toISOString()}] [${l.stream.toUpperCase()}] ${l.message}`
+      )
+      .join('\n');
+    try {
+      // Predtým sa `writeText` nezavolalo s `await` a bez `catch`, takže
+      // odmietnutie schránky vyrobilo neobsluhované výnimku - a tlačidlo
+      // ukázalo "Skopírované" aj keď sa nič neskopírovalo.
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch (err) {
+      console.error('Kopírovanie logov zlyhalo', err);
+      setCopyFailed(true);
+      return;
+    }
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleExportLogs = () => {
-    const text = logs.map((l) => `[${new Date(l.timestamp_ms).toISOString()}] [${l.stream.toUpperCase()}] ${l.message}`).join('\n');
+    // Exportoval `logs` (nefiltrované), kým Skopírovať kopírovalo
+    // `filteredLogs`. Po filtrovaní na stderr si používateľ exportoval iný
+    // súbor, než mal na obrazovke.
+    const text = filteredLogs
+      .map(
+        (l) =>
+          `[${new Date(l.timestamp_ms).toISOString()}] [${l.stream.toUpperCase()}] ${l.message}`
+      )
+      .join('\n');
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -102,7 +126,7 @@ export const LogViewer: React.FC = () => {
             leftIcon={copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             onClick={handleCopyLogs}
           >
-            {copied ? 'Skopírované' : 'Kopírovať'}
+            {copied ? 'Skopírované' : copyFailed ? 'Kopírovanie zlyhalo' : 'Kopírovať'}
           </Button>
 
           <Button
@@ -166,10 +190,20 @@ export const LogViewer: React.FC = () => {
       </div>
 
       {/* Terminal View */}
-      <Card className="p-0 overflow-hidden bg-slate-950 border-slate-800 shadow-xl">
-        <div className="p-4 h-[550px] overflow-y-auto font-mono text-xs leading-relaxed space-y-1 custom-scrollbar">
+      <Card className="p-0 overflow-hidden bg-slate-950 border-slate-800 shadow-xl relative">
+        <div
+          onScroll={handleScroll}
+          role="log"
+          aria-live={autoScroll ? 'polite' : 'off'}
+          aria-relevant="additions"
+          className="p-4 h-[550px] overflow-y-auto font-mono text-xs leading-relaxed space-y-1 custom-scrollbar"
+        >
           {filteredLogs.length === 0 ? (
-            <div className="text-slate-600 text-center py-24">Žiadne logy nezodpovedajú filtru.</div>
+            <div className="text-slate-500 text-center py-24">
+              {logs.length === 0
+                ? 'Zatiaľ žiadne logy. Spustite pipeline alebo inštaláciu — výstup sa zobrazí tu.'
+                : 'Žiadne logy nezodpovedajú filtru.'}
+            </div>
           ) : (
             filteredLogs.map((log, index) => (
               <div
@@ -191,6 +225,17 @@ export const LogViewer: React.FC = () => {
           )}
           <div ref={logsEndRef} />
         </div>
+
+        {showJumpButton && !autoScroll && (
+          <button
+            type="button"
+            onClick={jumpToLatest}
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white shadow-lg hover:bg-indigo-500"
+          >
+            <ArrowDown className="w-3.5 h-3.5" />
+            Skočiť na koniec
+          </button>
+        )}
       </Card>
     </div>
   );

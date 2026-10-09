@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Play, Pause, Trash2, Edit2, Check, Sparkles, Volume2 } from 'lucide-react';
 import { UtteranceItem } from '../../types/metadata';
 import { formatTimeSeconds } from '../../utils/formatters';
@@ -23,6 +23,14 @@ export const UtteranceRow: React.FC<UtteranceRowProps> = ({
 }) => {
   const [isEditingZh, setIsEditingZh] = useState<boolean>(false);
   const [zhText, setZhText] = useState<string>(item.chinese_text);
+
+  // `chinese_text` sa external mení (napr. "Skúsiť znova" načíta dokument znova),
+  // ale `useState` ho drží iba na prvom vykreslení. Textarea potom ukazovala starý
+  // text, kým `doc` už obsahoval nový - a `onBlur` pri tom prepísal ten starý
+  // späť. Zosynchronizujeme, keď sa zmení zdrojová hodnota.
+  useEffect(() => {
+    setZhText(item.chinese_text);
+  }, [item.chinese_text]);
 
   const handleSaveZh = () => {
     setIsEditingZh(false);

@@ -27,7 +27,13 @@ export const VramMeter: React.FC<VramMeterProps> = ({ budget }) => {
         <div className="flex items-center gap-2">
           {budget.is_overall_safe ? (
             <Badge variant="success" size="sm" icon={<ShieldCheck className="w-3 h-3" />}>
-              100% Bezpečné pre 12 GB VRAM & 16 GB RAM
+              {/* Predtým tu bolo natvrdo "100% Bezpečné pre 12 GB VRAM & 16 GB RAM".
+                  Tieto hodnoty sú konštanty z `vram_estimator.rs`, nie údaje o
+                  hardvéri používateľa - na karte s 8 GB VRAM aplikácia tvrdila,
+                  že má 12 GB a všetko je v poriadku. Teraz používame hodnoty
+                  z payloadu a hovoríme, že je to odhad. */}
+              Odhad: bezpečné pre {formatBytes(budget.total_gpu_vram_mb)} VRAM &amp;{' '}
+              {formatBytes(budget.total_system_ram_mb)} RAM
             </Badge>
           ) : (
             <Badge variant="warning" size="sm" icon={<AlertTriangle className="w-3 h-3" />}>
@@ -43,7 +49,7 @@ export const VramMeter: React.FC<VramMeterProps> = ({ budget }) => {
           <div className="flex justify-between text-xs">
             <span className="text-slate-400 flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-              Špičkové využitie VRAM (LatentSync 1.5)
+              Odhad najvyššej alokácie VRAM
             </span>
             <span className="font-mono text-slate-200 font-semibold">
               {formatBytes(budget.peak_vram_mb)} / {formatBytes(budget.total_gpu_vram_mb)}
@@ -58,7 +64,9 @@ export const VramMeter: React.FC<VramMeterProps> = ({ budget }) => {
             />
           </div>
           <p className="text-[10px] text-slate-500">
-            Fázy sa spúšťajú striktne sekvenčne; pamäť sa uvoľňuje po každom modeli.
+            Odhad podľa nastavenia, nie meranie. Fázy bežia sekvenčne a pamäť sa
+            uvoľňuje po každom modeli. Reálne využitie VRAM sa dá zistiť cez
+            kontrolu ROCm.
           </p>
         </div>
 
@@ -67,7 +75,7 @@ export const VramMeter: React.FC<VramMeterProps> = ({ budget }) => {
           <div className="flex justify-between text-xs">
             <span className="text-slate-400 flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
-              Špičkové využitie RAM (Whisper SK + Audio)
+              Odhad najvyššej alokácie RAM
             </span>
             <span className="font-mono text-slate-200 font-semibold">
               {formatBytes(budget.peak_ram_mb)} / {formatBytes(budget.total_system_ram_mb)}
@@ -80,7 +88,8 @@ export const VramMeter: React.FC<VramMeterProps> = ({ budget }) => {
             />
           </div>
           <p className="text-[10px] text-slate-500">
-            Hostiteľská pamäť 16 GB je dostatočná pre izolovaný sekvenčný beh.
+            Odhad pre nastavenie; porovnania s {formatBytes(budget.total_system_ram_mb)} je
+            orientačné, nie meranie vášho počítača.
           </p>
         </div>
       </div>

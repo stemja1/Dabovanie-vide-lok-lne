@@ -44,6 +44,15 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   const [installerLogs, setInstallerLogs] = useState<ProcessLogLine[]>([]);
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+  // Zrušenie je požiadavka, nie okamžitý dej: backend ju spracuje pri
+  // najbližšom bloku sťahovania a vráti chybu. `isRunningAll` preto zostáva
+  // true, kým slučka nedojde ku `finally`.
+  const [isCancelling, setIsCancelling] = useState<boolean>(false);
+  // Reálny priebeh sťahovania z backendu, nie odhad z čísla kroku.
+  const [downloadProgress, setDownloadProgress] = useState<{
+    percent: number;
+    label: string;
+  } | null>(null);
 
   const wizardSteps = [
     { id: 'wsl_install', title: '1. Inštalácia WSL2 & Ubuntu-24.04', desc: 'Overenie subsystému a inicializácia distribúcie' },
@@ -66,6 +75,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
       setModels(mList);
       if (rep.all_ok) {
         setIsCompletedAll(true);
+      } else {
+        // Chýbala `else`: po neúspešnej diagnostike zostalo `isCompletedAll`
+        // true z predchádzajúceho úspešného behu a hlavička stále hlásila
+        // "Inštalácia 100 % dokončená a pripravená!" so zeleným badge.
+        setIsCompletedAll(false);
       }
     } catch (err) {
       console.error('Failed to run diagnostics', err);
@@ -82,6 +96,16 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   useEffect(() => {
     const unsubscribe = addTauriListener('wizard_log_event', (payload: ProcessLogLine) => {
       setInstallerLogs((prev) => [...prev.slice(-400), payload]);
+      // Backend posiela skutočný priebeh sťahovania
+      // (`[PROGRESS:n%] názov: X / Y MB`). Predtým sa zahadzoval a bar sa
+      // odvádzal z čísla kroku, takže stál na 5,6 % počas 3,8 GB stiahnutia.
+      if (payload.is_progress && payload.progress_percent != null) {
+        const match = /^\[PROGRESS:[\d.]+%]\s*(.*)$/.exec(payload.message);
+        setDownloadProgress({
+          percent: payload.progress_percent,
+          label: match?.[1]?.trim() ?? '',
+        });
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -90,6 +114,8 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
     setIsRunningAll(true);
     setIsCompletedAll(false);
     setFailedStepIndex(null);
+    setIsCancelling(false);
+    setDownloadProgress(null);
     setActiveTab('wizard_run');
     if (startFromIndex === 0) {
       setInstallerLogs([]);
@@ -130,13 +156,24 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
         ]);
       } catch (err: any) {
         console.error(`Step ${step.id} failed`, err);
-        setFailedStepIndex(i);
         hasError = true;
+        // Exit 130 je `sys.exit(130)`, ktorým downloader hlási zrušenie
+        // používateľom. Rozlíšiť to od skutočnej chyby, inak by používateľ
+        // videl „CHYBA" po tom, čo sám zrušil.
+        const wasCancelled =
+          err?.message?.includes('130') ||
+          err?.message?.toLowerCase().includes('zrušen') ||
+          err?.message?.toLowerCase().includes('preruš');
+        if (!wasCancelled) {
+          setFailedStepIndex(i);
+        }
         setInstallerLogs((prev) => [
           ...prev,
           {
-            stream: 'stderr',
-            message: `❌ CHYBA v kroku "${step.title}": ${err?.message || err}`,
+            stream: wasCancelled ? 'system' : 'stderr',
+            message: wasCancelled
+              ? `⏹ [${new Date().toLocaleTimeString()}] Inštalácia zrušená používateľom počas kroku "${step.title}". Stiahnuté časti sú uložené a ďalší pokus ich dokončí.`
+              : `❌ CHYBA v kroku "${step.title}": ${err?.message || err}`,
             timestamp_ms: Date.now(),
             is_progress: false,
             progress_percent: null,
@@ -148,6 +185,8 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
     }
 
     setIsRunningAll(false);
+    setIsCancelling(false);
+    setDownloadProgress(null);
     if (!hasError) {
       setIsCompletedAll(true);
       setInstallerLogs((prev) => [
@@ -284,8 +323,17 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   };
 
   const handleCancel = async () => {
-    await invokeCommand('cancel_wizard_install');
-    setIsRunningAll(false);
+    // Signalise backend flag, ale NEukončí UI hneď. Predtým sa tu volalo
+    // `setIsRunningAll(false)`, čo znamenalo: hlásenie "Inštalácia
+    // pripravená" sa hneď zobrazilo, kým všetkých 9 krokov si šlo ďalej
+    // písať do venvu a na koniec vyhlásilo "100 % HOTOVO". Teraz beží slučka,
+    // ktorá po zrušení reálne dostane chybu a sama nastaví `isRunningAll`.
+    setIsCancelling(true);
+    try {
+      await invokeCommand('cancel_wizard_install');
+    } catch (err) {
+      console.error('cancel_wizard_install zlyhal', err);
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -301,7 +349,12 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   const calculatedProgress = isCompletedAll
     ? 100
     : isRunningAll
-    ? Math.min(95, ((currentStepIndex + 0.5) / wizardSteps.length) * 100)
+    ? // Backend hlási skutočný priebeh modelu; medzi modelmi spadneme na
+      // odhad podľa kroku, aby bar nikdy nezmizol.
+      downloadProgress
+      ? (currentStepIndex * 100) / wizardSteps.length +
+        (downloadProgress.percent * (100 / wizardSteps.length))
+      : Math.min(95, ((currentStepIndex + 0.5) / wizardSteps.length) * 100)
     : failedStepIndex !== null
     ? (failedStepIndex / wizardSteps.length) * 100
     : 0;
@@ -323,13 +376,20 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
 
         <div className="flex items-center gap-2">
           {isRunningAll ? (
+            // Stabilné tlačidlo: predtým sa tu prepínalo medzi "Spustiť" a
+            // "Zrušiť" na tej istej pozícii, takže druhý klik v okne prekreslenia
+            // trafí zrušenie namiesto spustenia. Teraz je tlačidlo stále na
+            // mieste a len sa deaktivuje po prvom kliku.
             <Button
               variant="danger"
               size="sm"
+              disabled={isCancelling}
               leftIcon={<Square className="w-3.5 h-3.5" />}
               onClick={handleCancel}
             >
-              Zrušiť inštaláciu
+              {isCancelling
+                ? 'Zastavujem…'
+                : 'Zrušiť po dokončení sťahovania'}
             </Button>
           ) : isCompletedAll ? (
             <Button
@@ -427,6 +487,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
                       <Sparkles className="w-4 h-4 text-emerald-400" />
                       <span>Inštalácia 100% dokončená a pripravená!</span>
                     </>
+                  ) : isCancelling ? (
+                    <span className="text-amber-400">
+                      Zastavujem… čakám, kým sa preruší aktuálne sťahovanie
+                    </span>
                   ) : isRunningAll ? (
                     <span>Vykonávam krok {currentStepIndex + 1}/{wizardSteps.length}: {wizardSteps[currentStepIndex]?.title}</span>
                   ) : failedStepIndex !== null ? (
@@ -435,6 +499,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
                     <span>Inštalácia pripravená na spustenie</span>
                   )}
                 </h4>
+                {downloadProgress && (
+                  <p className="text-xs text-indigo-300 mt-1 font-mono">
+                    {downloadProgress.label || 'Sťahovanie…'} ({downloadProgress.percent.toFixed(1)} %)
+                  </p>
+                )}
                 <p className="text-xs text-slate-400 mt-1">
                   {isCompletedAll
                     ? 'Všetky potrebné AI modely a ROCm knižnice sú pripravené v prostredí Ubuntu WSL2.'

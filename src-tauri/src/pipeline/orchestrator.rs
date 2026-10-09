@@ -609,10 +609,45 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
         // Build CLI command with strict POSIX shell escaping for security and $HOME resolution
         let cmd = self.build_stage_command(stage_id, &input_wsl, &output_wsl, &meta_wsl, config);
 
+        // The stage's Python script reports real progress via `[PROGRESS:n%]`
+        // lines. `WslExecutor` parses them, but that value only ever reached the
+        // log channel - nothing wrote it into `st.stages[i].progress_percent`,
+        // so the UI showed `0.0 %` for a 40-minute ASR run and then jumped
+        // straight to 100 %. Tap the channel here and keep the stage state in
+        // sync while the child process runs.
+        let (progress_tx, mut progress_rx) = mpsc::unbounded_channel::<ProcessLogLine>();
+        let progress_task = if log_tx.is_some() {
+            let state = self.state.clone();
+            let outer_tx = log_tx.clone();
+            Some(tokio::spawn(async move {
+                while let Some(line) = progress_rx.recv().await {
+                    if let Some(pct) = line.progress_percent {
+                        let mut st = state.lock().await;
+                        if let Some(s) = st.stages.get_mut(stage_index) {
+                            // Only advance, never rewind: out-of-order lines from
+                            // stdout and stderr must not make the bar jump back.
+                            if s.status == StageStatus::Running && pct > s.progress_percent {
+                                s.progress_percent = pct;
+                            }
+                        }
+                    }
+                    if let Some(tx) = &outer_tx {
+                        let _ = tx.send(line);
+                    }
+                }
+            }))
+        } else {
+            None
+        };
+
         let res = WslExecutor::run_streaming_command(
             &config.wsl_distro,
             &cmd,
-            log_tx.clone(),
+            if log_tx.is_some() {
+                Some(progress_tx.clone())
+            } else {
+                None
+            },
             // Per-stage timeout. A single flat 1-hour budget killed long ASR and
             // lip-sync runs on large videos; ASR and lip-sync get a longer budget
             // because they scale with video length, while the fast stages stay short.
@@ -620,6 +655,13 @@ ls -1 "$WORKSPACE/scripts"/*.py >&2 || true
             Some(self.is_cancelled.clone()),
         )
         .await?;
+
+        // Dropping the sender lets the forwarder task observe end-of-stream and
+        // finish; without this it would linger for the app's lifetime.
+        drop(progress_tx);
+        if let Some(task) = progress_task {
+            let _ = task.await;
+        }
 
         // If cancelled by user
         if res.error_kind == Some(ProcessErrorKind::Cancelled) {

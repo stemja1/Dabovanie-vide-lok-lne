@@ -10,6 +10,15 @@ import { SettingsModal } from './components/Settings/SettingsModal';
 import { LiveSystemMetrics, PipelineExecutionState, RocmStatusInfo } from './types/pipeline';
 import { invokeCommand, addTauriListener } from './utils/tauriBridge';
 
+// Editor sa predtým renderoval podmienečne:
+//
+//   {activeTab === 'metadata' && <UtteranceTable ... />}
+//
+// Prepnutie na iný tab ho odmountil a `beforeunload` sa nikdy nespustil
+// (React unmount ho nevyvolá). Všetky neuložené čínske preklady boli
+// ticho preč. Riešenie: component zostane mounted a tab sa len schová cez
+// `hidden`. `hidden` ho vyberá z tabulky pre čítačky obrazovky aj z focus
+// poradia, takže to nemení správanie pre klávesnicu.
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('pipeline');
   const [metrics, setMetrics] = useState<LiveSystemMetrics | null>(null);
@@ -128,34 +137,46 @@ export const App: React.FC = () => {
         hasOutputVideo={hasOutput}
       />
 
-      {/* Workspace Content View */}
+      {/* Workspace Content View
+
+          Panely sa NEschádzajú - `hidden` ich iba skryje. Editor prekladov a
+          LogViewer držia stav v pamäti componentu; podmienečné renderovanie
+          ich pri prepnutí tabu zničilo (neuložené preklady aj celá história
+          logov). `hidden` zároveň vyberá panel z accessibility stromu aj z
+          poradia fokusu. */}
       <main className="flex-1 overflow-y-auto px-6 py-6 custom-scrollbar">
-        {activeTab === 'pipeline' && (
+        <div hidden={activeTab !== 'pipeline'}>
           <PipelineStudio
             onNavigateToReview={() => setActiveTab('metadata')}
             onNavigateToPlayer={() => setActiveTab('player')}
           />
-        )}
+        </div>
 
-        {activeTab === 'metadata' && (
+        <div hidden={activeTab !== 'metadata'}>
           <UtteranceTable
             isPausedForReview={isPausedForReview}
             onConfirmAndContinue={handleConfirmAndContinueFromEditor}
           />
-        )}
+        </div>
 
-        {activeTab === 'player' && (
+        <div hidden={activeTab !== 'player'}>
           <DubbedVideoPlayer
             inputVideoPath={pipelineState?.input_video_path_win}
             outputVideoPath={pipelineState?.output_video_path_win || undefined}
           />
-        )}
+        </div>
 
-        {activeTab === 'wizard' && <SetupWizard />}
+        <div hidden={activeTab !== 'wizard'}>
+          <SetupWizard />
+        </div>
 
-        {activeTab === 'logs' && <LogViewer />}
+        <div hidden={activeTab !== 'logs'}>
+          <LogViewer />
+        </div>
 
-        {activeTab === 'settings' && <SettingsModal />}
+        <div hidden={activeTab !== 'settings'}>
+          <SettingsModal />
+        </div>
       </main>
     </div>
   );

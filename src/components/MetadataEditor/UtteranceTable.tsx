@@ -4,19 +4,16 @@ import {
   Plus,
   Play,
   RotateCcw,
-  Sparkles,
-  FileCheck,
+  Volume2,
   ArrowRight,
-  Download,
   AlertCircle,
-  HelpCircle,
   Search,
   Copy,
   Check,
   FileText,
 } from 'lucide-react';
 import { UtteranceItem, UtteranceMetadataDocument } from '../../types/metadata';
-import { invokeCommand } from '../../utils/tauriBridge';
+import { invokeCommand, convertVideoPathToUrl } from '../../utils/tauriBridge';
 import { formatSrtTimestamp } from '../../utils/formatters';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -107,11 +104,18 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
    * value drifted lower than the real video length and stage 4 sized the master
    * dubbed track too short, cutting off the tail of the dialogue.
    */
-  const withRecalculatedTiming = (utterances: UtteranceItem[]): Partial<UtteranceMetadataDocument> => {
-    const sorted = [...utterances].sort((a, b) => a.start_time - b.start_time);
-    const maxEnd = sorted.reduce((acc, u) => Math.max(acc, u.end_time), 0);
+  const withRecalculatedTiming = (
+    utterances: UtteranceItem[],
+    sort = true
+  ): Partial<UtteranceMetadataDocument> => {
+    // `total_duration` sa počíta z najneskoršieho `end_time` nezávisle na
+    // poradí, takže na výpočet netreba sortovať. Ten bol príčinou toho, že
+    // každý stlačený kláves v poli "Od:" preusporiadal tabuľku a riadok, do
+    // ktorého sa práve písalo, mohol skočiť na vrch - mid-word.
+    const maxEnd = utterances.reduce((acc, u) => Math.max(acc, u.end_time), 0);
+    const ordered = sort ? [...utterances].sort((a, b) => a.start_time - b.start_time) : utterances;
     return {
-      utterances: sorted.map((u) => ({
+      utterances: ordered.map((u) => ({
         ...u,
         duration: Number(Math.max(0.05, u.end_time - u.start_time).toFixed(2)),
       })),
@@ -121,7 +125,14 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
 
   const handleUpdateUtterance = (updated: UtteranceItem) => {
     if (!doc) return;
-    setDoc({ ...doc, ...withRecalculatedTiming(doc.utterances.map((u) => (u.id === updated.id ? updated : u))) });
+    // Bez `sort` - editácia poľa nesmie preskupovať tabuľku pod rukami.
+    setDoc({
+      ...doc,
+      ...withRecalculatedTiming(
+        doc.utterances.map((u) => (u.id === updated.id ? updated : u)),
+        false
+      ),
+    });
     markDirty();
   };
 
@@ -241,14 +252,60 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
     setTimeout(() => setCopiedNotification(null), 2500);
   };
 
-  const handleTogglePlay = (id: string) => {
+  // Tlačidlo ▶ predtým len prepínalo ikonu na ⏸ a po 3 sekundách späť. V
+  // `UtteranceTable` ani `UtteranceRow` nebol žiadny `<audio>` element, takže
+  // používateľ si myslel, že počúva vlastný hlas - a počunal ticho. Teraz
+  // prehrávame reálny segment z disku a `isPlaying` sa odvádza z udalostí
+  // prehrávača (`play` / `ended` / `error`), nie z časovača.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+
+  const handleTogglePlay = async (id: string) => {
     if (playingId === id) {
+      audioRef.current?.pause();
       setPlayingId(null);
-    } else {
+      return;
+    }
+    if (!doc) return;
+
+    const utt = doc.utterances.find((u) => u.id === id);
+    if (!utt) return;
+
+    // `target_audio_file` je cesta relatívna voči workspacetu vo WSL
+    // (`audio_segments/utt_001.wav`); `savePath` ukazuje na ten istý
+    // workspace, takže z neho vieme odvodiť absolútnu cestu.
+    if (!savePath) {
+      setAudioError('Najprv spustite fázy 1–3, aby vznikli audio segmenty.');
+      return;
+    }
+    const workspace = savePath.replace(/[\\/][^\\/]*_utterance_metadata\.json$/i, '');
+    const rel = (utt.target_audio_file || `audio_segments/${utt.id}.wav`).replace(/\\/g, '/');
+    const absPath = `${workspace}/${rel}`;
+
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+    }
+    const audio = audioRef.current;
+
+    audio.onended = () => setPlayingId(null);
+    audio.onerror = () => {
+      setPlayingId(null);
+      setAudioError(
+        `Segment ${utt.id} sa nepodarilo prehrať (${absPath}). Spustením fázy 4 vznikne TTS audio.`
+      );
+    };
+
+    try {
+      setAudioError(null);
+      // `convertVideoPathToUrl` je async (pre Tauri asset protocol), takže
+      // `src` sa nesmie nastaviť na Promise.
+      audio.src = await convertVideoPathToUrl(absPath);
+      await audio.play();
       setPlayingId(id);
-      setTimeout(() => {
-        setPlayingId((curr) => (curr === id ? null : curr));
-      }, 3000);
+    } catch (err) {
+      console.error('Prehratie segmentu zlyhalo', err);
+      setPlayingId(null);
+      setAudioError(`Prehratie zlyhalo: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -297,6 +354,26 @@ export const UtteranceTable: React.FC<UtteranceTableProps> = ({
             <strong className="block font-semibold text-rose-200">Uloženie metadát zlyhalo</strong>
             <span className="text-xs text-rose-300/80">{errorMessage}</span>
           </div>
+        </div>
+      )}
+
+      {audioError && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-start gap-2.5 rounded-lg border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"
+        >
+          <Volume2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <span className="text-amber-300/90">{audioError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAudioError(null)}
+            className="text-amber-400 hover:text-amber-200 text-xs"
+          >
+            Zavrieť
+          </button>
         </div>
       )}
 

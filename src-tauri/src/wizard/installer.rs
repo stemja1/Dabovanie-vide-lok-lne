@@ -492,12 +492,49 @@ def download_file_with_progress(url, dest_path, desc_name, expected_sha=None):
 
     temp_path = dest_path + '.part'
     print(f'Sťahujem {{desc_name}} z {{url}}...', flush=True)
-    r = requests.get(url, stream=True, timeout=60)
+
+    # Zrusanie bolo dorobene tak, ze zastavilo len UI. `cancel_wizard_install`
+    # nastavuje jeden AtomicBool kontrolovany IBA na zaciatku kroku - nikdy vo
+    # vnutri stahovania. Vsetkych 9 krokov teda pokracovalo az do konca, UI si
+    # myslel, ze pouzivatel nieco zastavil, a nakoniec vyhlasil "100% HOTOVO".
+    # Kontrolujeme preto stav pri kazdom bloku.
+    def was_cancelled():
+        return os.environ.get('AIDUBBING_CANCELLED') == '1'
+
+    # Pokracovanie po preruseni: predtym sa `.part` otvaralo s 'wb', takze kazdy
+    # pokus (aj ten po zruserii) zacinal od nuly a `.part` zostaval na disku.
+    already = 0
+    headers = {{}}
+    if os.path.exists(temp_path):
+        already = os.path.getsize(temp_path)
+        if already > 0:
+            headers['Range'] = f'bytes={{already}}-'
+            print(f'Pokracujem od {{already // (1024*1024)}} MB (predchadzajuce stiahnutie).', flush=True)
+
+    r = requests.get(url, stream=True, timeout=60, headers=headers)
+    # Server Range nepodporuje (200 namiesto 206) -> musime zacat odznova, inak
+    # by sme do suboru pripleli cely subor za uz stiahnutu cast.
+    if already > 0 and r.status_code == 200:
+        already = 0
+        r = requests.get(url, stream=True, timeout=60)
+
     r.raise_for_status()
-    total = int(r.headers.get('content-length', 0))
-    downloaded = 0
-    with open(temp_path, 'wb') as f:
+
+    total = int(r.headers.get('content-length', 0)) + already
+    downloaded = already
+    mode = 'ab' if already > 0 else 'wb'
+    with open(temp_path, mode) as f:
         for chunk in r.iter_content(chunk_size=65536):
+            if was_cancelled():
+                # Zachovame `.part` a hlasi PRERUSENE, nie HOTOVO - dalsi pokus
+                # stiahnutie dokonci od tohto miesta.
+                total_txt = str(total // (1024*1024)) if total else '?'
+                print(
+                    f'PRERUSENE pouzivatelom: {{desc_name}} '
+                    f'({{downloaded // (1024*1024)}} / {{total_txt}} MB). '
+                    f'Pokracovanie pri najblizsom pokuse.',
+                    file=sys.stderr, flush=True)
+                sys.exit(130)
             if chunk:
                 f.write(chunk)
                 downloaded += len(chunk)

@@ -9,6 +9,8 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
+use crate::wsl::path_mapper::PathMapper;
+
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -151,7 +153,25 @@ impl WslExecutor {
         timeout_duration: Option<Duration>,
         cancel_flag: Option<Arc<AtomicBool>>,
     ) -> Result<ProcessExecutionResult> {
-        let mut cmd = Self::build_command_with_user(distro, user, bash_command);
+        // WSL does NOT inherit the environment of the Windows process, so setting
+        // `cmd.env(..)` here would be invisible inside the distro (verified:
+        // `AIDUBBING_CANCELLED=1` on the Windows side still read back empty in
+        // bash). The value therefore has to be exported by the script itself,
+        // and `PathMapper::escape_bash_arg` keeps a hostile value from breaking
+        // out of the single-quoted assignment.
+        let bash_with_cancel = match &cancel_flag {
+            Some(flag) => {
+                let flag_value = if flag.load(Ordering::SeqCst) { "1" } else { "0" };
+                format!(
+                    "AIDUBBING_CANCELLED={} ; export AIDUBBING_CANCELLED; {}",
+                    PathMapper::escape_bash_arg(flag_value),
+                    bash_command
+                )
+            }
+            None => bash_command.to_string(),
+        };
+
+        let mut cmd = Self::build_command_with_user(distro, user, &bash_with_cancel);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
