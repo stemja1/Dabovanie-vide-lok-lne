@@ -43,7 +43,21 @@ pub async fn run_wizard_step(
     };
 
     let installer = wizard_state.0.clone();
-    installer.reset_cancel();
+    // NEVYMAŽEME tu cancel flag. `handleRunAllSteps` v UI volá `run_wizard_step`
+    // deväťkrát za sebou; predtým sa `reset_cancel()` volal na začiatku KAŽDÉHO
+    // kroku, takže používateľovo "Zrušiť" platilo iba do konca práve
+    // prebiehajúceho kroku a nasledujúci krok si myslel, že nič nezrušené.
+    // Reset teraz robí výlučne nový používateľský beh - vid nižšie.
+    //
+    // Hranicu "nového behu" tu nepoznáme (príkaz sa volá 9x), preto flag
+    // nekreslíme vôbec: `handleRunAllSteps` ho vyčistí pred svojim štartom cez
+    // `run_wizard_step` s prázdnym `step_id`? Nie - jednoduchšie: `cancel()`
+    // nastavuje flag a nič ho automaticky nezmaže; `reset_cancel()` je
+    // explicitný a zýva jediným miestom, kde sa volá.
+    let starting_new_run = step_id.is_empty() || step_id == "reset_cancel";
+    if starting_new_run {
+        installer.reset_cancel();
+    }
 
     let (tx, mut rx) = mpsc::unbounded_channel::<ProcessLogLine>();
 
@@ -106,6 +120,16 @@ pub async fn run_wizard_step(
         }
     };
 
+    // Rozlíšené zrušenie od zlyhania. Python downloader pri zrušení končí
+    // `sys.exit(130)`; bez tohto rozdelenia UI hlásilo "CHYBA v kroku" po tom,
+    // čo používateľ sám zrušil inštaláciu, a hlásilo to aj vtedy, keď je
+    // `success == false` preto, že predchádzajúci krok bol zrušený.
+    if installer.is_cancelled() {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "INŠTALÁCIA ZRUŠENÁ POUŽÍVATEĽOM"
+        )));
+    }
+
     if !success {
         return Err(AppError::Internal(anyhow::anyhow!(
             "Inštalačný krok '{}' zlyhal. Skontrolujte chybové hlásenie v logu.",
@@ -119,4 +143,10 @@ pub async fn run_wizard_step(
 #[tauri::command]
 pub fn cancel_wizard_install(wizard_state: State<'_, WizardState>) {
     wizard_state.0.cancel();
+}
+
+/// Explicitne zmaže príznak zrušenia pred novým inštalačným behom.
+#[tauri::command]
+pub fn reset_wizard_cancel(wizard_state: State<'_, WizardState>) {
+    wizard_state.0.reset_cancel();
 }

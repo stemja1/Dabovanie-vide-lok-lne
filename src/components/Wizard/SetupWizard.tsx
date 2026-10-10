@@ -109,6 +109,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   }, []);
 
   const handleRunAllSteps = async (startFromIndex: number = 0) => {
+    // Nový používateľský beh musí explicitne zmazať príznak zrušenia.
+    // Backend ho už automaticky nemaže medzi krokmi (inak by "Zrušiť" platilo
+    // len do konca práve prebiehajúceho kroku).
+    try {
+      await invokeCommand('reset_wizard_cancel');
+    } catch (err) {
+      console.error('reset_wizard_cancel zlyhal', err);
+    }
     setIsRunningAll(true);
     setIsCompletedAll(false);
     setFailedStepIndex(null);

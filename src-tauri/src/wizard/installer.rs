@@ -47,6 +47,10 @@ impl WizardInstaller {
         self.is_cancelled.store(true, Ordering::SeqCst);
     }
 
+    pub fn is_cancelled(&self) -> bool {
+        self.is_cancelled.load(Ordering::SeqCst)
+    }
+
     pub fn reset_cancel(&self) {
         self.is_cancelled.store(false, Ordering::SeqCst);
     }

@@ -40,6 +40,7 @@ pub fn run() {
             get_models_manifest,
             run_wizard_step,
             cancel_wizard_install,
+            reset_wizard_cancel,
             // Pipeline & VRAM
             set_pipeline_video,
             get_pipeline_state,
